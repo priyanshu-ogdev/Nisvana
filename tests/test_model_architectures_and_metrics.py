@@ -14,8 +14,13 @@ from training.models import (
 from training.utils.metrics import (
     compute_snr_db,
     compute_si_snr_db,
-    compute_erle_db,
+    compute_segmental_snr_db,
+    compute_stoi,
+    compute_pesq,
     compute_pesq_proxy,
+    compute_dnsmos_proxy,
+    compute_erle_db,
+    compute_classifier_metrics,
     build_eval_metrics_dict,
 )
 from training.callbacks.worst_class_checkpoint_selector import (
@@ -112,3 +117,52 @@ class TestAudioMetricsAndEvaluator:
             watched_classes=["wind", "rotor_vehicle_drone"],
         ))
         assert selector.should_accept_checkpoint(metrics) is True
+
+    def test_stoi_monotonicity_and_bounds(self):
+        clean = torch.randn(1, 48000)
+        noisy_light = clean + 0.05 * torch.randn(1, 48000)
+        noisy_heavy = clean + 2.0 * torch.randn(1, 48000)
+
+        stoi_clean = compute_stoi(clean, clean)
+        stoi_light = compute_stoi(noisy_light, clean)
+        stoi_heavy = compute_stoi(noisy_heavy, clean)
+
+        assert 0.0 <= stoi_clean <= 1.0
+        assert 0.0 <= stoi_light <= 1.0
+        assert 0.0 <= stoi_heavy <= 1.0
+        assert stoi_clean >= stoi_light > stoi_heavy
+
+    def test_segmental_snr_bounds(self):
+        clean = torch.randn(1, 48000)
+        noisy = clean + 0.1 * torch.randn(1, 48000)
+        ssnr = compute_segmental_snr_db(noisy, clean, sr=48000)
+        assert -10.0 <= ssnr <= 35.0
+
+    def test_dnsmos_proxy_bounds(self):
+        wav = torch.randn(1, 48000)
+        mos = compute_dnsmos_proxy(wav, sr=48000)
+        assert "dnsmos_sig" in mos
+        assert "dnsmos_bak" in mos
+        assert "dnsmos_ovrl" in mos
+        assert 1.0 <= mos["dnsmos_sig"] <= 5.0
+        assert 1.0 <= mos["dnsmos_bak"] <= 5.0
+        assert 1.0 <= mos["dnsmos_ovrl"] <= 5.0
+
+    def test_classifier_metrics(self):
+        logits = torch.tensor([[5.0, 1.0, 0.0], [0.0, 4.0, 1.0], [1.0, 0.0, 6.0]])
+        targets = torch.tensor([0, 1, 2])
+        m = compute_classifier_metrics(logits, targets)
+        assert m["accuracy"] == 1.0
+        assert m["macro_f1"] == 1.0
+        assert m["f1_harmonic"] == 1.0
+
+    def test_build_eval_metrics_dict_extended_keys(self):
+        est = torch.randn(2, 4800)
+        tgt = torch.randn(2, 4800)
+        classes = ["tank_tracked", "wind"]
+        d = build_eval_metrics_dict(est, tgt, classes)
+        assert "stoi_aggregate" in d
+        assert "si_snr_aggregate" in d
+        assert "stoi_tank_tracked" in d
+        assert "si_snr_wind" in d
+

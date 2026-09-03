@@ -18,7 +18,8 @@ scripts/
 ├── 09_train_se_crosscheck.sh/.ps1  # [Train] Model 3: State-Space SE (CleanUMamba)
 ├── 10_train_classifier.sh/.ps1     # [Train] Model 4: Acoustic Environment & Gate Classifier
 ├── 11_train_aec.sh/.ps1            # [Train] Model 5: Acoustic Echo Cancellation (--force)
-└── 12_train_all_models.sh/.ps1     # [Train] Sequential Multi-Model Master Orchestrator
+├── 12_train_all_models.sh/.ps1     # [Train] Sequential Multi-Model Master Orchestrator
+└── 13_evaluate_models.sh/.ps1      # [Eval] Multi-Model Audio Evaluation Suite (PESQ, STOI, SI-SNR, SSNR)
 ```
 
 > **Cross-Platform**: All scripts are provided in dual implementations: hardened Bash (`.sh`) for Linux environments and PowerShell (`.ps1`) for Windows ML workstations.
@@ -190,4 +191,25 @@ scripts/
   bash scripts/12_train_all_models.sh
   # PowerShell: .\scripts\12_train_all_models.ps1
   ```
+
+---
+
+### `13_evaluate_models.sh` / `.ps1`
+- **Purpose**: **Multi-Model Audio Evaluation Suite**. Runs comprehensive objective metrics across validation (`val`) or generalization (`gentest`) splits:
+  - **Speech Enhancement**: PESQ (Wideband MOS [1.0, 4.5]), STOI ([0.0, 1.0]), SI-SNR (dB), Segmental SNR (dB), DNSMOS P.835 (SIG, BAK, OVRL).
+  - **Environment Classifier**: 3-Way Categorical Accuracy, Macro-F1, per-class sensitivity (`harmonic`, `impulsive`, `speech_dominant`).
+  - **AEC**: Echo Return Loss Enhancement (ERLE dB).
+- **Per-Class Breakdown**: Evaluates fragile classes (`wind`, `rotor_vehicle_drone`, `tank_tracked`, `artillery_howitzer`) individually.
+- **Reporting**: Logs a structured Markdown table to stdout and writes JSON reports to `data/eval_reports/`.
+- **Usage**:
+  ```bash
+  # Evaluate Model 1 on validation split (50 samples)
+  bash scripts/13_evaluate_models.sh --model aegis-se-primary --num-samples 50 --split val
+  # PowerShell: .\scripts\13_evaluate_models.ps1 --model aegis-se-primary --num-samples 50 --split val
+
+  # Evaluate all models across the board
+  bash scripts/13_evaluate_models.sh --model all
+  # PowerShell: .\scripts\13_evaluate_models.ps1 --model all
+  ```
+
 
