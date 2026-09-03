@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Project AEGIS — [03] Full Production Data Pipeline Orchestrator (4 TB Server)
-# Runs the full multi-terabyte download, 10-step preprocessing, augmentation,
-# multi-branch forge mixing, WebDataset shard export, and pipeline verification.
+# Project AEGIS — [03] Full Production Data Pipeline Orchestrator
+# Runs the complete multi-terabyte download, 10-step preprocessing, augmentation,
+# multi-branch forge mixing, WebDataset shard export, and pipeline verification
+# on the high-capacity ML machine (4 TB storage).
 # ==============================================================================
 
 set -euo pipefail
@@ -44,11 +45,11 @@ done
 echo "=============================================================================="
 echo "          PROJECT AEGIS: FULL PRODUCTION DATA-FORGE EXECUTION"
 echo "=============================================================================="
-echo "Server Working Directory : ${ROOT_DIR}"
-echo "Max Worker Threads       : ${WORKERS}"
-echo "Target SE Mixtures       : ${NUM_MIXTURES}"
-echo "Commercial Strict Mode   : ${COMMERCIAL_STRICT}"
-echo "Started at               : $(date)"
+echo "Working Directory      : ${ROOT_DIR}"
+echo "Max Worker Threads     : ${WORKERS}"
+echo "Target SE Mixtures     : ${NUM_MIXTURES}"
+echo "Commercial Strict Mode : ${COMMERCIAL_STRICT}"
+echo "Started at             : $(date)"
 echo "=============================================================================="
 
 START_TIME=$(date +%s)
@@ -56,10 +57,10 @@ START_TIME=$(date +%s)
 # Step 0: Ensure directory tree exists
 bash "${SCRIPT_DIR}/00_setup_environment.sh"
 
-# Step 1: Multi-Source Download in Server Mode
+# Step 1: Multi-Source Download in Full Mode
 echo ""
-echo ">>> [STAGE 1/6] Downloading verified raw datasets in SERVER MODE..."
-${PY_BIN} -m data_forge fetch --source all --server-mode
+echo ">>> [STAGE 1/6] Downloading verified raw datasets in FULL PRODUCTION MODE..."
+${PY_BIN} -m data_forge fetch --source all --full-mode
 
 # Step 2: 10-Step Sequential Preprocessing Pipeline
 echo ""

@@ -35,7 +35,8 @@ from data_forge.config import BRANCH_AEC, BRANCH_CLASSIFIER, SAMPLES_PER_SHARD, 
 def cmd_fetch(args):
     print(">>> Executing Data Fetcher...")
     manager = FetchManager(RAW_DIR)
-    sample_mode = args.sample_mode and not args.server_mode
+    is_full = getattr(args, "full_mode", False) or getattr(args, "server_mode", False)
+    sample_mode = args.sample_mode and not is_full
 
     if args.source and args.source != "all":
         results = manager.fetch_source(args.source, sample_mode=sample_mode, dry_run=args.dry_run)
@@ -233,7 +234,8 @@ def main():
     p_fetch = subparsers.add_parser("fetch", help="Fetch dataset files")
     p_fetch.add_argument("--source", type=str, default="all", help="Source name or 'all'")
     p_fetch.add_argument("--sample-mode", action="store_true", help="Download sample subset for validation")
-    p_fetch.add_argument("--server-mode", action="store_true", help="Full multi-terabyte server download")
+    p_fetch.add_argument("--full-mode", action="store_true", help="Full multi-terabyte production download on 4TB storage")
+    p_fetch.add_argument("--server-mode", action="store_true", help=argparse.SUPPRESS)  # Alias for backwards compatibility
     p_fetch.add_argument("--dry-run", action="store_true", help="Verify endpoints without writing files")
 
     # preprocess
@@ -261,7 +263,8 @@ def main():
     p_all = subparsers.add_parser("run-all", help="Run complete end-to-end pipeline")
     p_all.add_argument("--source", type=str, default="all")
     p_all.add_argument("--sample-mode", action="store_true", help="Run in sample mode for testing")
-    p_all.add_argument("--server-mode", action="store_true", help="Run full server mode on 4TB storage")
+    p_all.add_argument("--full-mode", action="store_true", help="Run full production pipeline on 4TB storage")
+    p_all.add_argument("--server-mode", action="store_true", help=argparse.SUPPRESS)  # Alias for backwards compatibility
     p_all.add_argument("--dry-run", action="store_true", help="Dry run verification")
     p_all.add_argument("--max-workers", type=int, default=4)
     p_all.add_argument("--commercial-strict", action="store_true")

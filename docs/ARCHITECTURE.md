@@ -82,7 +82,7 @@ d:\Nisvana\data\
 
 ---
 
-## 4. Hardware Sizing & Scalability (4 TB Server Budget)
+## 4. Hardware Sizing & Storage Budget (High-Capacity ML Workstation / 4 TB Storage)
 
 - **Available Formatted Capacity**: ~3,725 GB
 - **Raw Corpora Downloaded**: ~206.5 GB
@@ -90,5 +90,5 @@ d:\Nisvana\data\
 - **Grounded Augmentations**: ~2.5 GB
 - **Forge Model Training Corpora**: ~281.2 GB (200,000 SE triplets, 50,000 classifier samples, 10,000 AEC quadruplets)
 - **WebDataset Shards**: ~281.5 GB
-- **Total Storage Utilized**: **~874.0 GB (23.5% of server volume)**
+- **Total Storage Utilized**: **~874.0 GB (23.5% of 4 TB volume)**
 - **Remaining Free Space**: **~2,851 GB (>2.8 TB)** for PyTorch checkpoints, optimizer states, evaluation caches, and tensorboard logs.

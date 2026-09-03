@@ -6,13 +6,13 @@ The scripts are numbered in their recommended chronological order of execution:
 
 ```
 scripts/
-├── 00_setup_environment.sh               # [Step 0] Python dependencies & directory tree initialization
-├── 01_data_pipeline_dry_run.sh           # [Step 1] Zero-disk-write endpoint & HTTP probe
-├── 02_data_pipeline_sample_test.sh       # [Step 2] End-to-end integration test + auto blank slate reset
-├── 03_data_pipeline_server_production.sh # [Step 3] Full-scale multi-worker 4 TB server pipeline runner
-├── 04_export_webdataset_shards.sh        # [Step 4] Standalone WebDataset tar packer & dataset card generator
-├── 05_clean_data_pipeline.sh             # [Utility] Complete data/ purge and blank slate reset
-└── 06_run_tests.sh                       # [Testing] Automated 49-test suite verification
+├── 00_setup_environment.sh         # [Step 0] Python dependencies & directory tree initialization
+├── 01_data_pipeline_dry_run.sh     # [Step 1] Zero-disk-write endpoint & HTTP probe
+├── 02_data_pipeline_sample_test.sh # [Step 2] End-to-end integration test + auto blank slate reset
+├── 03_data_pipeline_full_run.sh    # [Step 3] Full production multi-worker 4TB pipeline runner
+├── 04_export_webdataset_shards.sh  # [Step 4] Standalone WebDataset tar packer & dataset card generator
+├── 05_clean_data_pipeline.sh       # [Utility] Complete data/ purge and blank slate reset
+└── 06_run_tests.sh                 # [Testing] Automated 49-test suite verification
 ```
 
 ---
@@ -68,10 +68,10 @@ scripts/
 
 ---
 
-### `03_data_pipeline_server_production.sh`
-- **Purpose**: **Primary production orchestrator for the 4 TB server**. Runs the entire multi-source download, 10-step preprocessing, grounded augmentation, multi-branch mixing, WebDataset sharding, and pipeline audit.
+### `03_data_pipeline_full_run.sh`
+- **Purpose**: **Primary production orchestrator for the high-capacity ML machine (4 TB storage)**. Runs the entire multi-source download, 10-step preprocessing, grounded augmentation, multi-branch mixing, WebDataset sharding, and pipeline audit.
 - **Workflow**:
-  1. `data_forge fetch --source all --server-mode`: Downloads complete training sets (including multi-part Azure Blobs for DNS-5 noise & clean speech, Kaggle MAD, Dryad gunshots, SHAReD, NOISEX-92, etc.).
+  1. `data_forge fetch --source all --full-mode`: Downloads complete training sets (including multi-part Azure Blobs for DNS-5 noise & clean speech, Kaggle MAD, Dryad gunshots, SHAReD, NOISEX-92, etc.).
   2. `data_forge preprocess --max-workers N`: Parallel 10-step standardization to 48kHz, -23 LUFS, mono.
   3. `data_forge augment`: Grounded WSOLA time-stretch [0.90, 1.10] and gain jitter (zero pitch-shifting).
   4. `data_forge mix --num-mixtures M`: Synthesizes Model 1-3 SE triplets, Model 4 classifier, and Model 5 AEC samples.
@@ -84,7 +84,7 @@ scripts/
 - **Usage**:
   ```bash
   # Full production run (recommend inside tmux)
-  bash scripts/03_data_pipeline_server_production.sh --workers 16 --mixtures 200000
+  bash scripts/03_data_pipeline_full_run.sh --workers 16 --mixtures 200000
   ```
 
 ---
