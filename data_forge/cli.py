@@ -200,6 +200,9 @@ def cmd_export(args):
                     g["nearend.wav"] = nearend
                 if echo.exists():
                     g["echo.wav"] = echo
+                meta = branch / f"{key}.json"
+                if meta.exists():
+                    g["json"] = meta
                 return g
             return None
 

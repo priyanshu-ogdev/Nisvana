@@ -101,12 +101,20 @@ class SpeechEnhancementBranch:
             sf.write(clean_file, res.clean_target, TARGET_SAMPLE_RATE, subtype="PCM_16")
             sf.write(rir_file, res.reverberant_target, TARGET_SAMPLE_RATE, subtype="PCM_16")
 
+            # Infer acoustic class and sync tier from noise source path
+            noise_class = noise_p.parent.name
+            if noise_class in ("processed", "augmented", "audio", "wavs"):
+                noise_class = "general_noise"
+            sync_tier = 3 if "noisex" in noise_p.name.lower() else 1
+
             record = {
                 "clip_id": clip_id,
                 "target_snr_db": target_snr,
                 "measured_snr_db": res.measured_snr_db,
                 "clean_source": clean_p.name,
                 "noise_source": noise_p.name,
+                "unified_class": noise_class,
+                "sync_tier": sync_tier,
                 "rir_applied": res.rir_applied,
                 "rir_source": rir_p.name if rir_p else None,
                 "duration_sec": round(len(res.noisy_audio) / TARGET_SAMPLE_RATE, 2),
@@ -115,6 +123,11 @@ class SpeechEnhancementBranch:
                 "rir_path": str(rir_file),
             }
             records.append(record)
+
+            # Write per-sample JSON sidecar for WebDataset sharding & weighted sampling
+            json_file = self.output_dir / f"{clip_id}.json"
+            with open(json_file, "w", encoding="utf-8") as jf:
+                json.dump(record, jf, indent=2)
 
         # Save manifest
         manifest_path = self.output_dir / "manifest.json"

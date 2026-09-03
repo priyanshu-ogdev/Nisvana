@@ -128,9 +128,16 @@ class ClassifierBranch:
             dest_file = self.audio_dir / f"{clip_id}.wav"
             sf.write(dest_file, audio, sr, subtype="PCM_16")
 
+            gate_class = (
+                "harmonic" if category == ClassifierCategory.STATIONARY_HARMONIC
+                else "impulsive" if category == ClassifierCategory.NON_STATIONARY_TRANSIENT
+                else "speech_dominant"
+            )
+
             sample_record = {
                 "clip_id": clip_id,
                 "audio_path": str(dest_file),
+                "gate_class": gate_class,
                 "category_label": category.value,
                 "category_index": (
                     0 if category == ClassifierCategory.STATIONARY_HARMONIC
@@ -143,6 +150,11 @@ class ClassifierBranch:
                 "duration_sec": rec["duration_sec"],
             }
             classified_samples.append(sample_record)
+
+            # Write per-sample JSON sidecar for WebDataset sharding
+            json_file = self.output_dir / f"{clip_id}.json"
+            with open(json_file, "w", encoding="utf-8") as jf:
+                json.dump(sample_record, jf, indent=2)
 
         # Write labels.json
         labels_path = self.output_dir / "labels.json"

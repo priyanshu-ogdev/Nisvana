@@ -89,6 +89,11 @@ class AecBranch:
                 }
                 quadruplets.append(quad)
 
+                # Write per-sample JSON sidecar for WebDataset sharding
+                json_file = self.output_dir / f"{prefix}.json"
+                with open(json_file, "w", encoding="utf-8") as jf:
+                    json.dump(quad, jf, indent=2)
+
         # Write manifest
         manifest_path = self.output_dir / "manifest.json"
         with open(manifest_path, "w", encoding="utf-8") as f:
