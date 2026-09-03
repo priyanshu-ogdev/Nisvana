@@ -91,7 +91,37 @@ class TestRirFetcher:
         assert (tmp_path / "rir_wavs").exists()
 
 
+class TestVctkDemandFetcher:
+    def test_vctk_demand_archives_carry_confirmed_md5s(self):
+        archives = {name: md5 for _, name, md5 in VctkDemandFetcher.ARCHIVES}
+        assert archives["clean_testset_wav.zip"] == "34eb1c0ba7ef667e9b966866c542fc16"
+        assert archives["noisy_testset_wav.zip"] == "fb1b86caa31e8ba5b506c0c64da9aab5"
+        assert archives["clean_trainset_28spk_wav.zip"] == "d2d5a45ec32f8fcbf201bde0447e20ba"
+
+    def test_vctk_demand_dry_run(self, tmp_path):
+        fetcher = VctkDemandFetcher(tmp_path)
+        res = fetcher.fetch(sample_mode=True, dry_run=True)
+        assert len(res) > 0
+        assert res[0].success is True
+
+
 class TestDnsChallengeFetcher:
+    def test_dns_blobs_use_confirmed_naming_pattern(self):
+        blobs = DnsChallengeFetcher.VERIFIED_CLEAN_BLOBS + DnsChallengeFetcher.VERIFIED_NOISE_BLOBS
+        assert len(blobs) >= 10
+        for blob in blobs:
+            assert "_NA_NA" not in blob, f"Invalid _NA_NA placeholder found in {blob}"
+            assert blob.startswith(("Track1_Headset/", "noise_fullband/", "datasets_fullband."))
+
+    def test_dns_fetcher_has_dynamic_discovery_method(self):
+        assert hasattr(DnsChallengeFetcher, "_list_blobs_via_azure_api")
+        assert callable(getattr(DnsChallengeFetcher, "_list_blobs_via_azure_api"))
+
+    def test_dns_dev_testset_url_unchanged(self):
+        assert DnsChallengeFetcher.DEV_TESTSET_URL == (
+            "https://dnschallengepublic.blob.core.windows.net/dns5archive/V5_dev_testset.zip"
+        )
+
     def test_dns_dry_run_sample_mode(self, tmp_path):
         fetcher = DnsChallengeFetcher(tmp_path)
         sample_res = fetcher.fetch(sample_mode=True, dry_run=True)
@@ -101,5 +131,6 @@ class TestDnsChallengeFetcher:
     def test_dns_dry_run_training_mode(self, tmp_path):
         fetcher = DnsChallengeFetcher(tmp_path)
         train_res = fetcher.fetch(sample_mode=False, dry_run=True)
-        assert len(train_res) >= 4
+        assert len(train_res) >= 10
         assert any(r.success for r in train_res)
+
