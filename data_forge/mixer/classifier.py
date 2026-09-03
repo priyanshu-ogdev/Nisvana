@@ -136,6 +136,7 @@ class ClassifierBranch:
 
             sample_record = {
                 "clip_id": clip_id,
+                "split": rec.get("split", "train"),
                 "audio_path": str(dest_file),
                 "gate_class": gate_class,
                 "category_label": category.value,
@@ -156,14 +157,24 @@ class ClassifierBranch:
             with open(json_file, "w", encoding="utf-8") as jf:
                 json.dump(sample_record, jf, indent=2)
 
-        # Write labels.json
+        # Write labels.json (accumulative across splits)
         labels_path = self.output_dir / "labels.json"
+        all_clf = list(classified_samples)
+        if labels_path.exists():
+            try:
+                with open(labels_path, "r", encoding="utf-8") as f:
+                    prev = json.load(f).get("samples", [])
+                    existing_ids = {r["clip_id"] for r in classified_samples}
+                    all_clf = [p for p in prev if p.get("clip_id") not in existing_ids] + classified_samples
+            except Exception:
+                pass
+
         with open(labels_path, "w", encoding="utf-8") as f:
             json.dump({
                 "branch": "classifier_model_4",
                 "taxonomy": [c.value for c in ClassifierCategory],
-                "total_samples": len(classified_samples),
-                "samples": classified_samples,
+                "total_samples": len(all_clf),
+                "samples": all_clf,
             }, f, indent=2)
 
         logger.info("Saved Model 4 classifier labels to %s", labels_path)

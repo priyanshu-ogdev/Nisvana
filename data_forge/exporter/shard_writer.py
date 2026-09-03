@@ -112,21 +112,15 @@ def pack_branch_to_shards(
     shard_prefix: str,
     file_groups: Callable[[Path], Optional[Dict[str, Path]]],
     samples_per_shard: int = DEFAULT_SAMPLES_PER_SHARD,
+    split: Optional[str] = None,
 ) -> Dict:
     """
     Walks a flat-file branch directory and repacks it into WebDataset shards.
-
-    `file_groups(sample_root)` should return a dict mapping extension name to
-    the Path of each component file for one sample (e.g.
-    {"noisy.wav": .../000042_noisy.wav, "clean.wav": .../000042_clean.wav,
-     "json": .../000042.json}), or None to skip. This keeps the packer
-    agnostic to each branch's specific on-disk naming.
-
-    Returns the shard manifest summary (also written to disk as
-    <prefix>_shard_index.json alongside the shards).
+    If `split` is provided (e.g. 'train', 'val', 'gentest'), filters samples
+    belonging to that split and prefixes shards as '{shard_prefix}-{split}-*.tar'.
     """
     branch_dir = Path(branch_dir)
-    writer = ShardWriter(output_dir, shard_prefix, samples_per_shard)
+    effective_prefix = f"{shard_prefix}-{split}" if split else shard_prefix
 
     sample_keys: List[str] = []
     manifest_p = branch_dir / "manifest.json"
@@ -138,7 +132,8 @@ def pack_branch_to_shards(
                 sample_keys = [
                     s.get("clip_id") or s.get("prefix")
                     for s in data.get("samples", [])
-                    if s.get("clip_id") or s.get("prefix")
+                    if (s.get("clip_id") or s.get("prefix"))
+                    and (not split or s.get("split") == split or f"_{split}_" in str(s.get("clip_id")))
                 ]
         except Exception:
             pass
@@ -150,6 +145,7 @@ def pack_branch_to_shards(
                     s.get("clip_id")
                     for s in data.get("samples", [])
                     if s.get("clip_id")
+                    and (not split or s.get("split") == split or f"_{split}_" in str(s.get("clip_id")))
                 ]
         except Exception:
             pass
@@ -162,8 +158,21 @@ def pack_branch_to_shards(
                 if base.endswith(sfx):
                     base = base[:-len(sfx)]
                     break
-            stems.add(base)
+            if not split or f"_{split}_" in base or base.startswith(f"{split}_"):
+                stems.add(base)
         sample_keys = sorted(stems)
+
+    if not sample_keys and split:
+        return {
+            "shard_prefix": effective_prefix,
+            "total_shards": 0,
+            "total_samples": 0,
+            "total_bytes": 0,
+            "shards": [],
+            "samples_packed": 0,
+        }
+
+    writer = ShardWriter(output_dir, effective_prefix, samples_per_shard)
 
     packed = 0
     for key in sample_keys:

@@ -175,3 +175,105 @@ class TestPerSampleJsonSidecarRoundTrip:
         assert sidecar["sync_tier"] == 3  # NOISEX is Tier 3
         assert "target_snr_db" in sidecar
         assert "measured_snr_db" in sidecar
+
+
+class TestSplitPreservationAndShardSurvives:
+    """Verifies that split separation and metadata survive all the way into WebDataset shards."""
+
+    def test_split_segregation_and_shard_metadata_survival(self, tmp_path):
+        from data_forge.mixer.speech_enhancement import SpeechEnhancementBranch
+        from data_forge.exporter.shard_writer import pack_branch_to_shards
+        from data_forge.exporter.torch_dataset import _BaseAegisShardDataset
+        import soundfile as sf
+        import tarfile
+
+        sr = 48000
+        silence = np.zeros(sr * 2, dtype=np.float32)
+
+        # Setup branch
+        branch_dir = tmp_path / "branch_se"
+        shards_dir = tmp_path / "shards" / "speech_enhancement"
+        branch = SpeechEnhancementBranch(output_dir=branch_dir)
+
+        clean_file = tmp_path / "clean_001.wav"
+        noise_dir = tmp_path / "tank_tracked"
+        noise_dir.mkdir(parents=True, exist_ok=True)
+        noise_file = noise_dir / "noisex92_leopard.wav"
+        sf.write(clean_file, silence, sr)
+        sf.write(noise_file, silence, sr)
+
+        # 1. Generate train mixtures
+        train_recs = branch.generate_mixtures(
+            clean_files=[clean_file],
+            noise_files=[noise_file],
+            rir_files=[],
+            num_mixtures=2,
+            split="train",
+        )
+        assert len(train_recs) == 2
+        assert all(r["split"] == "train" for r in train_recs)
+        assert all("se_train_" in r["clip_id"] for r in train_recs)
+
+        # 2. Generate val mixtures
+        val_recs = branch.generate_mixtures(
+            clean_files=[clean_file],
+            noise_files=[noise_file],
+            rir_files=[],
+            num_mixtures=1,
+            split="val",
+        )
+        assert len(val_recs) == 1
+        assert val_recs[0]["split"] == "val"
+        assert "se_val_" in val_recs[0]["clip_id"]
+
+        # Define file grouping function
+        def se_groups(sample_root: Path):
+            key = sample_root.name
+            b = sample_root.parent
+            n = b / "noisy" / f"{key}_noisy.wav"
+            c = b / "clean" / f"{key}_clean.wav"
+            if n.exists() and c.exists():
+                g = {"noisy.wav": n, "clean.wav": c}
+                meta = b / f"{key}.json"
+                if meta.exists():
+                    g["json"] = meta
+                return g
+            return None
+
+        # 3. Pack train shards
+        train_summary = pack_branch_to_shards(branch_dir, shards_dir, "se", se_groups, samples_per_shard=10, split="train")
+        assert train_summary["samples_packed"] == 2
+        train_shard = shards_dir / "se-train-000000.tar"
+        assert train_shard.exists(), f"Expected {train_shard} to exist"
+
+        # 4. Pack val shards
+        val_summary = pack_branch_to_shards(branch_dir, shards_dir, "se", se_groups, samples_per_shard=10, split="val")
+        assert val_summary["samples_packed"] == 1
+        val_shard = shards_dir / "se-val-000000.tar"
+        assert val_shard.exists(), f"Expected {val_shard} to exist"
+
+        # 5. Open train shard and verify metadata survival
+        with tarfile.open(train_shard, "r") as tar:
+            names = tar.getnames()
+            assert any(n.endswith(".json") for n in names)
+            json_name = [n for n in names if n.endswith(".json")][0]
+            f = tar.extractfile(json_name)
+            assert f is not None
+            meta = json.loads(f.read().decode("utf-8"))
+
+            # Crucial assertions: unified_class, sync_tier, and split survive 100%!
+            assert meta["unified_class"] == "tank_tracked"
+            assert meta["sync_tier"] == 3
+            assert meta["split"] == "train"
+
+        # 6. Verify pattern resolution for PyTorch dataset
+        try:
+            ds_train = _BaseAegisShardDataset(shards_dir, split="train", shard_prefix="se")
+            assert "se-train-" in str(ds_train.dataset.urls[0])
+
+            ds_val = _BaseAegisShardDataset(shards_dir, split="val", shard_prefix="se")
+            assert "se-val-" in str(ds_val.dataset.urls[0])
+        except ImportError:
+            # webdataset optional at test time
+            pass
+

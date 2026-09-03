@@ -38,7 +38,16 @@ class _BaseAegisShardDataset:
     def __init__(self, shard_dir: Path, split: str = "train", shard_prefix: str = "shard"):
         self.shard_dir = Path(shard_dir)
         self.split = split
-        pattern = str(self.shard_dir / f"{shard_prefix}-{{000000..999999}}.tar")
+
+        # Check if split-specific shards exist (e.g. se-train-*.tar, se-val-*.tar, se-gentest-*.tar)
+        split_tag = "gentest" if split in ("test", "gentest", "test_generalization") else split
+        split_pattern = str(self.shard_dir / f"{shard_prefix}-{split_tag}-{{000000..999999}}.tar")
+        legacy_pattern = str(self.shard_dir / f"{shard_prefix}-{{000000..999999}}.tar")
+
+        # Select split pattern if matching shards are found on disk, otherwise legacy fallback
+        split_matches = list(self.shard_dir.glob(f"{shard_prefix}-{split_tag}-*.tar"))
+        pattern = split_pattern if split_matches else legacy_pattern
+
         self._wds = _require_webdataset()
         # WebDataset resolves the brace-range against files actually present.
         self.dataset = self._wds.WebDataset(pattern, shardshuffle=(split == "train"), nodesplitter=self._wds.split_by_node)

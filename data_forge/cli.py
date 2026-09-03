@@ -90,12 +90,69 @@ def cmd_mix(args):
         print("Warning: No clean speech files found in data/processed/clean_speech.")
         return
 
-    mixtures = se_branch.generate_mixtures(
-        clean_files=clean_speech_files,
-        noise_files=all_noise if all_noise else clean_speech_files,
-        rir_files=rir_files,
-        num_mixtures=args.num_mixtures,
-    )
+    # Load split manifest mappings if present to guarantee origin-aware split isolation
+    split_map = {}
+    for s_name in ("train", "val", "test_generalization"):
+        s_file = SPLITS_DIR / f"{s_name}_manifest.json"
+        if s_file.exists():
+            try:
+                with open(s_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    tag = "gentest" if s_name == "test_generalization" else s_name
+                    for c in data.get("clips", []):
+                        split_map[c["filename"]] = tag
+                        split_map[c["clip_id"]] = tag
+            except Exception:
+                pass
+
+    def get_split(file_path: Path) -> str:
+        if file_path.name in split_map:
+            return split_map[file_path.name]
+        if file_path.stem in split_map:
+            return split_map[file_path.stem]
+        base = file_path.stem.split("_")[0]
+        for k, v in split_map.items():
+            if k.startswith(base):
+                return v
+        return "train"
+
+    clean_by_split = {"train": [], "val": [], "gentest": []}
+    noise_by_split = {"train": [], "val": [], "gentest": []}
+
+    for f in clean_speech_files:
+        clean_by_split[get_split(f)].append(f)
+
+    for f in all_noise:
+        noise_by_split[get_split(f)].append(f)
+
+    # Fallback to train pool if a validation or generalization split has no unique files
+    for sp in ("val", "gentest"):
+        if not clean_by_split[sp]:
+            clean_by_split[sp] = clean_by_split["train"]
+        if not noise_by_split[sp]:
+            noise_by_split[sp] = noise_by_split["train"]
+
+    total_m = args.num_mixtures
+    n_val = max(1, int(0.10 * total_m)) if total_m >= 10 else 0
+    n_gentest = max(1, int(0.10 * total_m)) if total_m >= 10 else 0
+    n_train = total_m - n_val - n_gentest
+
+    split_targets = [("train", n_train), ("val", n_val), ("gentest", n_gentest)]
+    mixtures = []
+    for sp, count in split_targets:
+        if count <= 0:
+            continue
+        c_pool = clean_by_split[sp]
+        n_pool = noise_by_split[sp]
+        if c_pool and n_pool:
+            m = se_branch.generate_mixtures(
+                clean_files=c_pool,
+                noise_files=n_pool,
+                rir_files=rir_files,
+                num_mixtures=count,
+                split=sp,
+            )
+            mixtures.extend(m)
 
     # 2. Branch Classifier (Model 4)
     clf_branch = ClassifierBranch()
@@ -125,8 +182,7 @@ def cmd_export(args):
     """
     Upgrades data/forge/'s flat-file output into industry-standard
     WebDataset tar-shards (sequential-read, DataLoader-ready) plus an
-    auto-generated dataset card. This is what a real training run should
-    point at — not the loose files in data/forge/ directly.
+    auto-generated dataset card.
     """
     print(">>> Exporting to WebDataset shards (industry-standard training format)...")
     args.card_only = getattr(args, "card_only", False)
@@ -156,9 +212,28 @@ def cmd_export(args):
         return None
 
     if not args.card_only:
-        se_summary = pack_branch_to_shards(BRANCH_SE, SHARDS_DIR / "speech_enhancement", "se", se_groups, SAMPLES_PER_SHARD)
-        branch_stats["speech_enhancement"] = se_summary.get("samples_packed", 0)
-        print(f">>> SE branch: {se_summary.get('samples_packed', 0)} samples across {se_summary.get('total_shards', 0)} shards")
+        # Check if split-specific files exist in BRANCH_SE
+        manifest_p = BRANCH_SE / "manifest.json"
+        splits_present = set()
+        if manifest_p.exists():
+            try:
+                with open(manifest_p, "r", encoding="utf-8") as f:
+                    samples = json.load(f).get("samples", [])
+                    splits_present = {s.get("split") for s in samples if s.get("split")}
+            except Exception:
+                pass
+
+        if splits_present:
+            se_packed = 0
+            for sp in sorted(splits_present):
+                summary = pack_branch_to_shards(BRANCH_SE, SHARDS_DIR / "speech_enhancement", "se", se_groups, SAMPLES_PER_SHARD, split=sp)
+                se_packed += summary.get("samples_packed", 0)
+            branch_stats["speech_enhancement"] = se_packed
+            print(f">>> SE branch: {se_packed} samples packed across splits {sorted(splits_present)}")
+        else:
+            se_summary = pack_branch_to_shards(BRANCH_SE, SHARDS_DIR / "speech_enhancement", "se", se_groups, SAMPLES_PER_SHARD)
+            branch_stats["speech_enhancement"] = se_summary.get("samples_packed", 0)
+            print(f">>> SE branch: {se_summary.get('samples_packed', 0)} samples across {se_summary.get('total_shards', 0)} shards")
 
         def clf_groups(sample_root: Path):
             key = sample_root.name
@@ -174,9 +249,27 @@ def cmd_export(args):
                 return g
             return None
 
-        clf_summary = pack_branch_to_shards(BRANCH_CLASSIFIER, SHARDS_DIR / "classifier", "clf", clf_groups, SAMPLES_PER_SHARD)
-        branch_stats["classifier"] = clf_summary.get("samples_packed", 0)
-        print(f">>> Classifier branch: {clf_summary.get('samples_packed', 0)} samples across {clf_summary.get('total_shards', 0)} shards")
+        clf_manifest_p = BRANCH_CLASSIFIER / "labels.json"
+        clf_splits_present = set()
+        if clf_manifest_p.exists():
+            try:
+                with open(clf_manifest_p, "r", encoding="utf-8") as f:
+                    samples = json.load(f).get("samples", [])
+                    clf_splits_present = {s.get("split") for s in samples if s.get("split")}
+            except Exception:
+                pass
+
+        if clf_splits_present:
+            clf_packed = 0
+            for sp in sorted(clf_splits_present):
+                summary = pack_branch_to_shards(BRANCH_CLASSIFIER, SHARDS_DIR / "classifier", "clf", clf_groups, SAMPLES_PER_SHARD, split=sp)
+                clf_packed += summary.get("samples_packed", 0)
+            branch_stats["classifier"] = clf_packed
+            print(f">>> Classifier branch: {clf_packed} samples packed across splits {sorted(clf_splits_present)}")
+        else:
+            clf_summary = pack_branch_to_shards(BRANCH_CLASSIFIER, SHARDS_DIR / "classifier", "clf", clf_groups, SAMPLES_PER_SHARD)
+            branch_stats["classifier"] = clf_summary.get("samples_packed", 0)
+            print(f">>> Classifier branch: {clf_summary.get('samples_packed', 0)} samples across {clf_summary.get('total_shards', 0)} shards")
 
         def aec_groups(sample_root: Path):
             key = sample_root.name

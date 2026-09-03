@@ -39,6 +39,7 @@ class SpeechEnhancementBranch:
         noise_files: List[Path],
         rir_files: List[Path],
         num_mixtures: int = 100,
+        split: str = "train",
     ) -> List[Dict[str, Any]]:
         """
         Generates paired training samples for Models 1-3.
@@ -51,7 +52,7 @@ class SpeechEnhancementBranch:
         if not noise_files:
             raise ValueError("No noise files provided for speech enhancement branch.")
 
-        logger.info("Generating %d speech enhancement triplets...", num_mixtures)
+        logger.info("Generating %d speech enhancement triplets for split '%s'...", num_mixtures, split)
         records = []
 
         for idx in range(num_mixtures):
@@ -91,7 +92,7 @@ class SpeechEnhancementBranch:
             # Mix
             res = self.mixer.mix_signals(clean_audio, noise_audio, target_snr_db=target_snr, rir=rir_audio)
 
-            clip_id = f"se_{idx:05d}"
+            clip_id = f"se_{split}_{idx:05d}"
             noisy_file = self.noisy_dir / f"{clip_id}_noisy.wav"
             clean_file = self.clean_dir / f"{clip_id}_clean.wav"
             rir_file = self.rir_dir / f"{clip_id}_rir.wav"
@@ -109,6 +110,7 @@ class SpeechEnhancementBranch:
 
             record = {
                 "clip_id": clip_id,
+                "split": split,
                 "target_snr_db": target_snr,
                 "measured_snr_db": res.measured_snr_db,
                 "clean_source": clean_p.name,
@@ -129,10 +131,20 @@ class SpeechEnhancementBranch:
             with open(json_file, "w", encoding="utf-8") as jf:
                 json.dump(record, jf, indent=2)
 
-        # Save manifest
+        # Save manifest (accumulative across splits)
         manifest_path = self.output_dir / "manifest.json"
+        all_samples = list(records)
+        if manifest_path.exists():
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    prev = json.load(f).get("samples", [])
+                    existing_ids = {r["clip_id"] for r in records}
+                    all_samples = [p for p in prev if p.get("clip_id") not in existing_ids] + records
+            except Exception:
+                pass
+
         with open(manifest_path, "w", encoding="utf-8") as f:
-            json.dump({"branch": "speech_enhancement", "total_samples": len(records), "samples": records}, f, indent=2)
+            json.dump({"branch": "speech_enhancement", "total_samples": len(all_samples), "samples": all_samples}, f, indent=2)
 
         logger.info("Generated %d speech enhancement samples in %s", len(records), self.output_dir)
         return records
