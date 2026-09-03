@@ -80,6 +80,18 @@ class MadFetcher(BaseFetcher):
                 ),
             )
 
+        # Check if files were manually placed into output directory
+        existing_wavs = list(self.output_dir.glob("**/*.wav"))
+        if existing_wavs and not dry_run:
+            logger.info("Found %d existing MAD audio clips in %s", len(existing_wavs), self.output_dir)
+            return DownloadResult(
+                success=True,
+                destination=existing_wavs[0],
+                bytes_downloaded=sum(w.stat().st_size for w in existing_wavs),
+                elapsed_sec=0.0,
+                md5="",
+            )
+
         if not self._kaggle_credentials_present():
             msg = (
                 "Kaggle credentials not configured. The MAD audio archive (~1.1GB, 8,075 clips) "

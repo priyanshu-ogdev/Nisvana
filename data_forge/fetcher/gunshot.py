@@ -26,7 +26,7 @@ class GunshotDryadFetcher(BaseFetcher):
 
     def fetch(self, sample_mode: bool = False, dry_run: bool = False) -> List[DownloadResult]:
         results = []
-        files_to_download = self.FILES[:1] if sample_mode else self.FILES
+        files_to_download = self.FILES[:2] if sample_mode else self.FILES
 
         # Check if files were manually placed into output directory
         existing_wavs = list(self.output_dir.glob("*.wav"))

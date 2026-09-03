@@ -134,3 +134,16 @@ class TestDnsChallengeFetcher:
         assert len(train_res) >= 10
         assert any(r.success for r in train_res)
 
+
+class TestAecChallengeFetcher:
+    def test_aec_dry_run(self, tmp_path):
+        fetcher = AecChallengeFetcher(tmp_path)
+        res = fetcher.fetch(sample_mode=True, dry_run=True)
+        assert len(res) > 0
+        assert res[0].success is True
+
+    def test_aec_quadruplet_structure(self, tmp_path):
+        fetcher = AecChallengeFetcher(tmp_path)
+        assert len(fetcher.SAMPLE_FILE_IDS) == 5
+
+
