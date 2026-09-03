@@ -130,6 +130,12 @@ class BaseModelConfig:
     log_every_n_steps: int = 100
     eval_every_n_steps: int = 2500
 
+    # Optimization & Training Lifecycle
+    lr: float = 1e-3
+    lr_warmup_steps: int = 5000
+    total_finetune_steps: int = 100_000
+    early_stopping_patience: int = 10
+
     # --- SOTA upgrade pass additions, all opt-in/configurable per-model, ---
     # --- not silently forced -- see each module's docstring for grounding. ---
     ema: EmaConfig = field(default_factory=EmaConfig)

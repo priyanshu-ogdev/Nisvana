@@ -46,6 +46,10 @@ class ClassifierTrainer(BaseTrainer):
         ], dtype=torch.float32)
         self.criterion = nn.CrossEntropyLoss(weight=weights)
 
+        if hasattr(self, "device") and isinstance(self.device, torch.device):
+            self.model.to(self.device)
+            self.criterion.to(self.device)
+
     def build_model(self) -> nn.Module:
         """Lightweight 1D CNN + pooling classifier for audio clips."""
         from training.models.model_loader import build_model_for_key
@@ -73,6 +77,10 @@ class ClassifierTrainer(BaseTrainer):
             label = label.unsqueeze(0)
         if wav.dim() >= 2 and label.shape[0] != wav.shape[0]:
             label = label.repeat(wav.shape[0])
+
+        if hasattr(self, "device") and isinstance(self.device, torch.device):
+            wav = wav.to(self.device)
+            label = label.to(self.device)
 
         logits = self.model(wav)
         loss = self.criterion(logits, label)
@@ -109,6 +117,10 @@ class ClassifierTrainer(BaseTrainer):
                 label = label.unsqueeze(0)
             if wav.dim() >= 2 and label.shape[0] != wav.shape[0]:
                 label = label.repeat(wav.shape[0])
+
+            if hasattr(self, "device") and isinstance(self.device, torch.device):
+                wav = wav.to(self.device)
+                label = label.to(self.device)
 
             logits = self.model(wav)
             preds = torch.argmax(logits, dim=-1)

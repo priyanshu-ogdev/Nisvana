@@ -58,13 +58,13 @@ def build_weighted_se_dataset(
 ):
     """
     Returns an AegisSpeechEnhancementIterableDataset with per-sample
-    weights attached via its manifest 'json' sidecar (written by the
-    data-forge preprocessing pipeline's metadata-tagging step). The
-    dataset itself is unchanged from the exporter module -- this function
-    only computes and attaches the weight, keeping the exporter's shard
-    format model-agnostic.
+    weights attached via its manifest 'json' sidecar. Gracefully returns
+    None if webdataset is not installed.
     """
-    dataset = AegisSpeechEnhancementIterableDataset(shard_dir, split=split)
+    try:
+        dataset = AegisSpeechEnhancementIterableDataset(shard_dir, split=split)
+    except ImportError:
+        return None
 
     def _weight_fn(sample: dict) -> float:
         meta = sample.get("json", {})

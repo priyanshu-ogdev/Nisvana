@@ -37,6 +37,9 @@ class SePrimaryTrainer(BaseTrainer):
         self.val_dataset = val_dataset
 
         self.model = self.build_model()
+        if hasattr(self, "device") and isinstance(self.device, torch.device):
+            self.model.to(self.device)
+
         wd = getattr(self.config, "weight_decay", getattr(self.config, "weight_decay_end", 1e-2))
         beta1 = getattr(self.config, "adam_beta1", 0.9)
         beta2 = getattr(self.config, "adam_beta2", 0.999)
@@ -72,6 +75,11 @@ class SePrimaryTrainer(BaseTrainer):
         self.model.train()
         self.optimizer.zero_grad()
 
+        # Update learning rate with linear warmup and cosine decay
+        current_lr = self.get_lr(self.step)
+        for pg in self.optimizer.param_groups:
+            pg["lr"] = current_lr
+
         # Handle either tuple (noisy, clean) or dict batch from DataLoader
         if isinstance(batch, dict):
             noisy = batch.get("noisy.wav", batch.get("noisy"))
@@ -88,26 +96,43 @@ class SePrimaryTrainer(BaseTrainer):
         if not isinstance(clean, torch.Tensor):
             clean = torch.tensor(clean, dtype=torch.float32)
 
+        if hasattr(self, "device") and isinstance(self.device, torch.device):
+            noisy = noisy.to(self.device)
+            clean = clean.to(self.device)
+
         # On-the-fly SpecMix on noisy input if 2D/3D spectrogram or time-frequency
         if hasattr(self.config, "spec_mix") and self.config.spec_mix.enabled:
             # SpecMix applies to 2D numpy arrays
             pass
 
-        enhanced = self.model(noisy)
-        losses = self.loss_fn(enhanced, clean)
-        total_loss = losses["total"]
+        if getattr(self, "use_amp", False) and self.scaler is not None:
+            with torch.amp.autocast(device_type="cuda"):
+                enhanced = self.model(noisy)
+                losses = self.loss_fn(enhanced, clean)
+                total_loss = losses["total"]
 
-        total_loss.backward()
-        if self.config.gradient_clip_norm > 0:
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.gradient_clip_norm)
+            self.scaler.scale(total_loss).backward()
+            if self.config.gradient_clip_norm > 0:
+                self.scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.gradient_clip_norm)
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            enhanced = self.model(noisy)
+            losses = self.loss_fn(enhanced, clean)
+            total_loss = losses["total"]
 
-        self.optimizer.step()
+            total_loss.backward()
+            if self.config.gradient_clip_norm > 0:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.gradient_clip_norm)
+            self.optimizer.step()
 
         if self.ema_tracker:
             self.ema_tracker.update(self.model)
 
         res = {k: v.item() if isinstance(v, torch.Tensor) else v for k, v in losses.items()}
         res["loss"] = total_loss.item()
+        res["lr"] = current_lr
         return res
 
     def eval_step(self, batch: Any) -> dict:
@@ -127,6 +152,10 @@ class SePrimaryTrainer(BaseTrainer):
                 noisy = torch.tensor(noisy, dtype=torch.float32)
             if not isinstance(clean, torch.Tensor):
                 clean = torch.tensor(clean, dtype=torch.float32)
+
+            if hasattr(self, "device") and isinstance(self.device, torch.device):
+                noisy = noisy.to(self.device)
+                clean = clean.to(self.device)
 
             enhanced = self.model(noisy)
             cls_name = meta.get("unified_class", "general_noise") if isinstance(meta, dict) else "general_noise"

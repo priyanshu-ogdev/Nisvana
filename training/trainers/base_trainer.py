@@ -33,6 +33,34 @@ class BaseTrainer(ABC):
         if hasattr(config, "worst_class_checkpoint") and config.worst_class_checkpoint.enabled:
             self.worst_class_selector = WorstClassCheckpointSelector(config.worst_class_checkpoint)
 
+        # Device placement & Mixed Precision (AMP)
+        try:
+            import torch
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.use_amp = getattr(self.config, "mixed_precision", False) and self.device.type == "cuda"
+            self.scaler = torch.amp.GradScaler("cuda", enabled=self.use_amp)
+        except ImportError:
+            self.device = "cpu"
+            self.use_amp = False
+            self.scaler = None
+
+        # Early stopping tracking
+        self.early_stopping_patience = getattr(self.config, "early_stopping_patience", 10)
+        self.patience_counter = 0
+
+    def get_lr(self, step: int) -> float:
+        """Computes learning rate with linear warmup and cosine decay."""
+        import math
+        base_lr = getattr(self.config, "lr", 1e-3)
+        warmup_steps = getattr(self.config, "lr_warmup_steps", 5000)
+        total_steps = getattr(self.config, "total_finetune_steps", getattr(self.config, "max_epochs", 50) * 1000)
+
+        if step < warmup_steps:
+            return base_lr * float(step) / float(max(1, warmup_steps))
+        progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+        progress = min(1.0, max(0.0, progress))
+        return base_lr * (0.5 * (1.0 + math.cos(math.pi * progress)))
+
     @abstractmethod
     def build_model(self):
         """Constructs and returns the model, loading `pretrained_init` if set."""
@@ -40,6 +68,13 @@ class BaseTrainer(ABC):
 
     def init_ema(self, model):
         """Initializes EMA tracker if enabled in config."""
+        try:
+            import torch
+            if isinstance(self.device, torch.device):
+                model.to(self.device)
+        except Exception:
+            pass
+
         if hasattr(self.config, "ema") and self.config.ema.enabled:
             self.ema_tracker = EmaTracker(model, self.config.ema)
         return self.ema_tracker
@@ -122,13 +157,14 @@ class BaseTrainer(ABC):
     def should_checkpoint(self) -> bool:
         return self.step > 0 and self.step % self.config.checkpoint_every_n_steps == 0
 
-    def run_training_loop(self, batches: List[Any], val_batches: Optional[List[Any]] = None) -> Dict[str, Any]:
+    def run_training_loop(self, batches: Any, val_batches: Optional[Any] = None) -> Dict[str, Any]:
         """
         Executes a sequence of training steps, evaluating and checkpointing
-        according to the configured cadence.
+        according to the configured cadence, with early stopping guard.
         """
         step_records = []
         checkpoints_saved = []
+        early_stopped = False
 
         for batch in batches:
             loss_dict = self.training_step(batch)
@@ -137,10 +173,11 @@ class BaseTrainer(ABC):
 
             if self.should_eval() and val_batches:
                 eval_metrics = {}
-                for v_batch in val_batches:
+                val_list = list(val_batches) if not isinstance(val_batches, list) else val_batches
+                for v_batch in val_list:
                     m = self.eval_step(v_batch)
                     for k, v in m.items():
-                        eval_metrics[k] = eval_metrics.get(k, 0.0) + v / len(val_batches)
+                        eval_metrics[k] = eval_metrics.get(k, 0.0) + v / max(len(val_list), 1)
 
                 if self.should_checkpoint():
                     saved = self.save_checkpoint(
@@ -149,6 +186,12 @@ class BaseTrainer(ABC):
                     )
                     if saved:
                         checkpoints_saved.append(saved)
+                        self.patience_counter = 0
+                    else:
+                        self.patience_counter += 1
+                        if self.patience_counter >= self.early_stopping_patience:
+                            early_stopped = True
+                            break
             elif self.should_checkpoint():
                 saved = self.save_checkpoint(model_state={"step": self.step})
                 if saved:
@@ -158,4 +201,5 @@ class BaseTrainer(ABC):
             "total_steps": self.step,
             "losses": step_records,
             "checkpoints_saved": [str(p) for p in checkpoints_saved],
+            "early_stopped": early_stopped,
         }

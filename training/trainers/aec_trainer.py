@@ -38,6 +38,10 @@ class AecGateTrainer(BaseTrainer):
         )
         self.criterion = nn.MSELoss()
 
+        if hasattr(self, "device") and isinstance(self.device, torch.device):
+            self.model.to(self.device)
+            self.criterion.to(self.device)
+
     def build_model(self) -> nn.Module:
         """Lightweight 2-channel AEC linear/conv baseline."""
         from training.models.model_loader import build_model_for_key
@@ -63,6 +67,11 @@ class AecGateTrainer(BaseTrainer):
             farend = torch.tensor(farend, dtype=torch.float32)
         if not isinstance(nearend, torch.Tensor):
             nearend = torch.tensor(nearend, dtype=torch.float32)
+
+        if hasattr(self, "device") and isinstance(self.device, torch.device):
+            mic = mic.to(self.device)
+            farend = farend.to(self.device)
+            nearend = nearend.to(self.device)
 
         out = self.model(mic, farend)
         loss = self.criterion(out, nearend)

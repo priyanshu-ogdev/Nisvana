@@ -171,6 +171,59 @@ class TestTrainerLifecycleAndExecution:
         assert len(result["losses"]) == 4
         # Step 2 and Step 4 should have saved checkpoints
         assert len(result["checkpoints_saved"]) == 2
+        assert result["early_stopped"] is False
+
+    def test_get_lr_warmup_and_cosine_decay(self, tmp_path):
+        cfg = BaseModelConfig(
+            model_key="test-model",
+            checkpoint_dir=tmp_path / "checkpoints",
+            log_dir=tmp_path / "logs",
+            lr=1e-3,
+        )
+        trainer = ConcreteTestTrainer(cfg)
+        cfg.lr_warmup_steps = 1000
+        cfg.total_finetune_steps = 10000
+
+        # Step 0: near 0
+        assert trainer.get_lr(0) == 0.0
+        # Step 500: halfway through warmup -> ~0.5e-3
+        assert pytest.approx(trainer.get_lr(500), abs=1e-5) == 5e-4
+        # Step 1000: end of warmup -> full 1e-3
+        assert pytest.approx(trainer.get_lr(1000), abs=1e-5) == 1e-3
+        # Step 5500: halfway through cosine decay -> ~0.5e-3
+        assert pytest.approx(trainer.get_lr(5500), abs=1e-4) == 5e-4
+        # Step 10000: end of decay -> 0
+        assert pytest.approx(trainer.get_lr(10000), abs=1e-5) == 0.0
+
+    def test_early_stopping_triggered_on_stagnation(self, tmp_path):
+        cfg = BaseModelConfig(
+            model_key="stagnant-model",
+            checkpoint_dir=tmp_path / "checkpoints",
+            log_dir=tmp_path / "logs",
+            checkpoint_every_n_steps=1,
+            eval_every_n_steps=1,
+            early_stopping_patience=2,
+            worst_class_checkpoint=WorstClassCheckpointConfig(
+                enabled=True,
+                watched_classes=["wind"],
+                max_allowed_regression_pesq=0.01,
+            ),
+        )
+        trainer = ConcreteTestTrainer(cfg)
+
+        # Baseline establishes high-water mark
+        trainer.step = 0
+        trainer.save_checkpoint(model_state={}, metrics={"pesq_aggregate": 3.0, "pesq_wind": 3.0})
+
+        # Batch sequence with severe wind regression on every step (trips guard every step)
+        train_batches = [{"val": 1.0}] * 10
+        val_batches = [{"pesq_aggregate": 3.2, "pesq_wind": 2.0}]  # Regressed!
+
+        result = trainer.run_training_loop(train_batches, val_batches)
+        # Should stop after patience (2) + 1 steps, rather than running all 10
+        assert result["early_stopped"] is True
+        assert result["total_steps"] <= 3
+
 
 
 class TestWorstClassValidationInLoop:
