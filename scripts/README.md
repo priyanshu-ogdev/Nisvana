@@ -12,8 +12,16 @@ scripts/
 ├── 03_data_pipeline_full_run.sh    # [Step 3] Full production multi-worker 4TB pipeline runner
 ├── 04_export_webdataset_shards.sh  # [Step 4] Standalone WebDataset tar packer & dataset card generator
 ├── 05_clean_data_pipeline.sh       # [Utility] Complete data/ purge and blank slate reset
-└── 06_run_tests.sh                 # [Testing] Automated 49-test suite verification
+├── 06_run_tests.sh                 # [Testing] Automated 108-test suite verification
+├── 07_train_se_primary.sh/.ps1     # [Train] Model 1: Primary Real-Time SE (0ms lookahead)
+├── 08_train_se_escalation.sh/.ps1  # [Train] Model 2: Escalation SE (40ms lookahead)
+├── 09_train_se_crosscheck.sh/.ps1  # [Train] Model 3: State-Space SE (CleanUMamba)
+├── 10_train_classifier.sh/.ps1     # [Train] Model 4: Acoustic Environment & Gate Classifier
+├── 11_train_aec.sh/.ps1            # [Train] Model 5: Acoustic Echo Cancellation (--force)
+└── 12_train_all_models.sh/.ps1     # [Train] Sequential Multi-Model Master Orchestrator
 ```
+
+> **Cross-Platform**: All scripts are provided in dual implementations: hardened Bash (`.sh`) for Linux environments and PowerShell (`.ps1`) for Windows ML workstations.
 
 ---
 
@@ -112,8 +120,74 @@ scripts/
 ---
 
 ### `06_run_tests.sh`
-- **Purpose**: Executes the complete 49-test unit and integration test suite across all 6 packages using `pytest`.
+- **Purpose**: Executes the complete 108-test unit and integration test suite across all subpackages using `pytest`.
 - **Usage**:
   ```bash
   bash scripts/06_run_tests.sh
   ```
+
+---
+
+### `07_train_se_primary.sh` / `.ps1`
+- **Purpose**: Trains **Model 1 (`aegis-se-primary`)**, the low-latency streaming speech enhancement engine.
+- **Specs**: DeepFilterNet3 architecture, 0 ms lookahead, multi-res spectral + local SNR loss, SpecMix augmentation, EMA shadow weights.
+- **Usage**:
+  ```bash
+  bash scripts/07_train_se_primary.sh [--resume PATH]
+  # PowerShell: .\scripts\07_train_se_primary.ps1
+  ```
+
+---
+
+### `08_train_se_escalation.sh` / `.ps1`
+- **Purpose**: Trains **Model 2 (`aegis-se-escalation`)**, the high-capacity semi-causal speech enhancement model.
+- **Specs**: DeepFilterNet3 architecture, 40 ms lookahead (`df_lookahead=2`, `conv_lookahead=2`), emphasis on negative SNR segments, dual-metric worst-class checkpoint selector.
+- **Usage**:
+  ```bash
+  bash scripts/08_train_se_escalation.sh [--resume PATH]
+  # PowerShell: .\scripts\08_train_se_escalation.ps1
+  ```
+
+---
+
+### `09_train_se_crosscheck.sh` / `.ps1`
+- **Purpose**: Trains **Model 3 (`aegis-se-crosscheck`)**, the CleanUMamba state-space U-Net model.
+- **Specs**: Native 48kHz training on AEGIS shards, linear $\mathcal{O}(L)$ state-space representation, serves as architectural cross-validation and GPU fallback.
+- **Usage**:
+  ```bash
+  bash scripts/09_train_se_crosscheck.sh [--resume PATH]
+  # PowerShell: .\scripts\09_train_se_crosscheck.ps1
+  ```
+
+---
+
+### `10_train_classifier.sh` / `.ps1`
+- **Purpose**: Trains **Model 4 (`aegis-clf-gate`)**, the acoustic environment and escalation classifier.
+- **Specs**: 3-way taxonomy (`harmonic`, `impulsive`, `speech_dominant`), class-weighted cross-entropy, validates escalation boundary against Model 1/2 gap.
+- **Usage**:
+  ```bash
+  bash scripts/10_train_classifier.sh [--resume PATH]
+  # PowerShell: .\scripts\10_train_classifier.ps1
+  ```
+
+---
+
+### `11_train_aec.sh` / `.ps1`
+- **Purpose**: Fine-tunes **Model 5 (`aegis-aec-gate`)**, the acoustic echo cancellation model.
+- **Safety**: Requires `--force` argument because production deployment defaults to the proven `deepvqe-ggml` checkpoint.
+- **Usage**:
+  ```bash
+  bash scripts/11_train_aec.sh --force
+  # PowerShell: .\scripts\11_train_aec.ps1 -force
+  ```
+
+---
+
+### `12_train_all_models.sh` / `.ps1`
+- **Purpose**: **Master Training Orchestrator**. Sequentially trains Model 1, Model 2, Model 3, and Model 4, logging checkpoints into `data/checkpoints/`.
+- **Usage**:
+  ```bash
+  bash scripts/12_train_all_models.sh
+  # PowerShell: .\scripts\12_train_all_models.ps1
+  ```
+
