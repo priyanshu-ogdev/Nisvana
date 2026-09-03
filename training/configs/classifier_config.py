@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List
 
 from .base_config import BaseModelConfig
+from training.callbacks.ema import EmaConfig
 
 
 # The 3-way collapse of the 10-class unified taxonomy, per the label
@@ -102,6 +103,11 @@ class ClassifierConfig(BaseModelConfig):
     # data-forge design decision this config depends on and should not
     # duplicate).
     label_source: str = "generated_from_mixing_params"
+
+    # EMA disabled here, matching this module's own docstring claim: a
+    # small, fast-converging model (25 epochs, patience 6) doesn't get
+    # much benefit from smoothing a long noisy trajectory it doesn't have.
+    ema: EmaConfig = field(default_factory=lambda: EmaConfig(enabled=False))
 
     # Integration test, not just a standalone accuracy number: does this
     # classifier's "impulsive/hard" flag actually correlate with where

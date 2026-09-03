@@ -22,6 +22,12 @@ from typing import Any, Dict, List, Optional
 # Single source of truth: import SyncTier and UnifiedClass directly from data_forge.config
 from data_forge.config import SyncTier, UnifiedClass
 
+# SOTA upgrade pass config imports
+from training.callbacks.ema import EmaConfig
+from training.callbacks.worst_class_checkpoint_selector import WorstClassCheckpointConfig
+from training.data.spec_augment import SpecMixConfig
+from training.schedulers.snr_curriculum import SnrCurriculumConfig
+
 # Down-weighting factors applied to WeightedRandomSampler per sync tier.
 # Rationale: Tier 3 sources (LibriSpeech, MUSAN, NOISEX-92, OpenSLR RIRs)
 # have no real energy above 8kHz -- letting them compete equally with Tier 1
@@ -123,6 +129,13 @@ class BaseModelConfig:
     log_dir: Path = Path("training/runs")
     log_every_n_steps: int = 100
     eval_every_n_steps: int = 2500
+
+    # --- SOTA upgrade pass additions, all opt-in/configurable per-model, ---
+    # --- not silently forced -- see each module's docstring for grounding. ---
+    ema: EmaConfig = field(default_factory=EmaConfig)
+    spec_mix: SpecMixConfig = field(default_factory=SpecMixConfig)
+    snr_curriculum: SnrCurriculumConfig = field(default_factory=SnrCurriculumConfig)
+    worst_class_checkpoint: WorstClassCheckpointConfig = field(default_factory=WorstClassCheckpointConfig)
 
     def checkpoint_name(self, step: int) -> str:
         return f"{self.model_key}-v{self.config_version}-step{step:08d}.pt"
