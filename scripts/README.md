@@ -21,7 +21,9 @@ scripts/
 ├── 12_train_all_models.sh/.ps1     # [Train] Sequential Multi-Model Master Orchestrator
 ├── 13_evaluate_models.sh/.ps1      # [Eval] Multi-Model Audio Evaluation Suite (PESQ, STOI, SI-SNR, SSNR)
 ├── 14_run_acceptance_tests.sh/.ps1 # [Acceptance] Mission-Critical Defence Acceptance Test Suite
-└── 15_export_edge_onnx.sh/.ps1     # [Edge] ONNX Edge Model Exporter & Latency Profiler
+├── 15_export_edge_onnx.sh/.ps1     # [Edge] ONNX Edge Model Exporter & Latency Profiler
+├── 16_enhance_audio.sh/.ps1        # [Inference] Offline Audio File Enhancement Runner
+└── 17_live_stream_prototype.sh/.ps1# [Inference] Real-Time Live Microphone & Headset ANC Prototype
 ```
 
 > **Cross-Platform**: All scripts are provided in dual implementations: hardened Bash (`.sh`) for Linux environments and PowerShell (`.ps1`) for Windows ML workstations.
@@ -234,8 +236,43 @@ scripts/
   ```bash
   # Export Model 1 for real-time edge streaming
   bash scripts/15_export_edge_onnx.sh --model aegis-se-primary --chunk-ms 20.0
-  # PowerShell: .\scripts\15_export_edge_onnx.ps1 --model aegis-se-primary --chunk-ms 20.0
+---
+
+### `16_enhance_audio.sh` / `.ps1`
+- **Purpose**: **Offline Audio File Enhancement Runner**. Processes noisy audio files (WAV, FLAC, MP3) through any trained model, the Hybrid AI + NLMS adaptive filter, or the Dynamic Acoustic Escalation Router.
+- **Actions**:
+  - Automatically loads and resamples audio to standard 48,000 Hz.
+  - Applies 50% Overlap-Add (OLA) streaming reconstruction with Hanning synthesis.
+  - Estimates input vs output DNSMOS (ITU-T P.835) quality improvement.
+- **Usage**:
+  ```bash
+  # Enhance noisy recording with Model 1
+  bash scripts/16_enhance_audio.sh -i noisy.wav -o clean.wav --model aegis-se-primary
+
+  # Enhance with Hybrid AI + NLMS Adaptive Filter
+  bash scripts/16_enhance_audio.sh -i noisy.wav -o clean.wav --use-hybrid-anc
+
+  # PowerShell:
+  .\scripts\16_enhance_audio.ps1 -i noisy.wav -o clean.wav --use-hybrid-anc
   ```
+
+---
+
+### `17_live_stream_prototype.sh` / `.ps1`
+- **Purpose**: **Real-Time Live Microphone & Headset ANC Prototype**. Paced demonstration running the end-to-end tactical headset pipeline:
+  - 48,000 Hz streaming chunks (10 ms frame pacing).
+  - Dynamic acoustic classification (Model 4) and escalation routing (Model 1 / Model 2).
+  - Continuous Normalized LMS residual noise cancellation.
+  - Displays real-time frame processing latencies and Real-Time Factor (RTF).
+- **Usage**:
+  ```bash
+  # Run 5-second live streaming prototype demo
+  bash scripts/17_live_stream_prototype.sh --duration 5.0 --chunk-ms 10.0
+
+  # PowerShell:
+  .\scripts\17_live_stream_prototype.ps1 -duration 5.0 -chunk-ms 10.0
+  ```
+
 
 
 
