@@ -1,0 +1,125 @@
+"""
+Project AEGIS — Speech Enhancement Branch (Models 1-3)
+Target Architectures: DeepFilterNet3 (x2), CleanUMamba
+Generates synchronized triplets: (noisy_mixture.wav, clean_target.wav, reverberant_target.wav)
+"""
+
+import json
+import logging
+import random
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+import numpy as np
+import soundfile as sf
+from data_forge.config import BRANCH_SE, TARGET_SAMPLE_RATE, ForgeMixingConfig
+from .engine import SnrMixerEngine
+
+logger = logging.getLogger("DataForge.BranchSE")
+
+
+class SpeechEnhancementBranch:
+    """Generates speech enhancement training corpus for Models 1-3."""
+
+    def __init__(self, output_dir: Path = BRANCH_SE, config: Optional[ForgeMixingConfig] = None):
+        self.output_dir = Path(output_dir)
+        self.config = config or ForgeMixingConfig()
+        self.mixer = SnrMixerEngine(sample_rate=TARGET_SAMPLE_RATE)
+
+        # Output subdirectories
+        self.noisy_dir = self.output_dir / "noisy"
+        self.clean_dir = self.output_dir / "clean"
+        self.rir_dir = self.output_dir / "rir"
+
+        for d in (self.noisy_dir, self.clean_dir, self.rir_dir):
+            d.mkdir(parents=True, exist_ok=True)
+
+    def generate_mixtures(
+        self,
+        clean_files: List[Path],
+        noise_files: List[Path],
+        rir_files: List[Path],
+        num_mixtures: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """
+        Generates paired training samples for Models 1-3.
+        """
+        random.seed(self.config.seed)
+        np.random.seed(self.config.seed)
+
+        if not clean_files:
+            raise ValueError("No clean speech files provided for speech enhancement branch.")
+        if not noise_files:
+            raise ValueError("No noise files provided for speech enhancement branch.")
+
+        logger.info("Generating %d speech enhancement triplets...", num_mixtures)
+        records = []
+
+        for idx in range(num_mixtures):
+            clean_p = random.choice(clean_files)
+            noise_p = random.choice(noise_files)
+            rir_p = random.choice(rir_files) if rir_files and (random.random() < self.config.rir_probability) else None
+
+            # Read clean and noise
+            clean_audio, _ = sf.read(clean_p, dtype="float32")
+            noise_audio, _ = sf.read(noise_p, dtype="float32")
+            rir_audio, _ = sf.read(rir_p, dtype="float32") if rir_p else (None, None)
+
+            clean_audio = np.asarray(clean_audio, dtype=np.float32)
+            if clean_audio.ndim > 1:
+                clean_audio = np.mean(clean_audio, axis=1)
+
+            noise_audio = np.asarray(noise_audio, dtype=np.float32)
+            if noise_audio.ndim > 1:
+                noise_audio = np.mean(noise_audio, axis=1)
+
+            if rir_audio is not None:
+                rir_audio = np.asarray(rir_audio, dtype=np.float32)
+                if rir_audio.ndim > 1:
+                    rir_audio = np.mean(rir_audio, axis=1)
+
+            # Target slice duration for consistent training tensor dimensions
+            if self.config.target_duration_sec > 0:
+                target_samples = int(self.config.target_duration_sec * TARGET_SAMPLE_RATE)
+                if len(clean_audio) > target_samples:
+                    max_start = len(clean_audio) - target_samples
+                    start_idx = random.randint(0, max_start)
+                    clean_audio = clean_audio[start_idx : start_idx + target_samples]
+
+            # Sample random SNR from uniform range [-5 dB, +20 dB]
+            target_snr = round(random.uniform(self.config.min_snr_db, self.config.max_snr_db), 1)
+
+            # Mix
+            res = self.mixer.mix_signals(clean_audio, noise_audio, target_snr_db=target_snr, rir=rir_audio)
+
+            clip_id = f"se_{idx:05d}"
+            noisy_file = self.noisy_dir / f"{clip_id}_noisy.wav"
+            clean_file = self.clean_dir / f"{clip_id}_clean.wav"
+            rir_file = self.rir_dir / f"{clip_id}_rir.wav"
+
+            # Write WAVs
+            sf.write(noisy_file, res.noisy_audio, TARGET_SAMPLE_RATE, subtype="PCM_16")
+            sf.write(clean_file, res.clean_target, TARGET_SAMPLE_RATE, subtype="PCM_16")
+            sf.write(rir_file, res.reverberant_target, TARGET_SAMPLE_RATE, subtype="PCM_16")
+
+            record = {
+                "clip_id": clip_id,
+                "target_snr_db": target_snr,
+                "measured_snr_db": res.measured_snr_db,
+                "clean_source": clean_p.name,
+                "noise_source": noise_p.name,
+                "rir_applied": res.rir_applied,
+                "rir_source": rir_p.name if rir_p else None,
+                "duration_sec": round(len(res.noisy_audio) / TARGET_SAMPLE_RATE, 2),
+                "noisy_path": str(noisy_file),
+                "clean_path": str(clean_file),
+                "rir_path": str(rir_file),
+            }
+            records.append(record)
+
+        # Save manifest
+        manifest_path = self.output_dir / "manifest.json"
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump({"branch": "speech_enhancement", "total_samples": len(records), "samples": records}, f, indent=2)
+
+        logger.info("Generated %d speech enhancement samples in %s", len(records), self.output_dir)
+        return records
