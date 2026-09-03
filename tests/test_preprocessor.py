@@ -282,3 +282,11 @@ class TestStep10Split:
             assert meta_musan in splits["test_generalization"]
             assert meta_musan not in splits["train"]
             assert meta_musan not in splits["val"]
+
+
+class TestDatasetProfiles:
+    def test_mad_sync_tier_is_native_48k(self):
+        from data_forge.config import DATASET_PROFILES
+        profile = DATASET_PROFILES["mad"]
+        assert profile.native_sample_rate == 48000
+        assert profile.default_sync_tier == SyncTier.TIER_1_NATIVE_48K
