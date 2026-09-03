@@ -41,25 +41,39 @@ This installs Python dependencies, creates the complete `data/` directory hierar
 
 ---
 
-## 3. External API Credentials (Optional but Recommended)
+## 3. Environment & Credentials Configuration (.env)
 
-### 1. Kaggle API (For Military Audio Dataset — MAD)
-The real audio archive (~1.1 GB, 8,075 clips) is hosted on Kaggle (`junewookim/mad-dataset-military-audio-dataset`).
-```bash
-export KAGGLE_USERNAME="your_kaggle_username"
-export KAGGLE_KEY="your_kaggle_api_key"
-# OR place credentials at ~/.kaggle/kaggle.json
-mkdir -p ~/.kaggle
-echo '{"username":"your_username","key":"your_key"}' > ~/.kaggle/kaggle.json
-chmod 600 ~/.kaggle/kaggle.json
-```
-*(If credentials are not supplied, the pipeline falls back to reading local files placed in `data/raw/mad/`)*.
+The data-forge automatically reads configuration and credentials from `.env` in the repository root or `data_forge/.env` with zero external dependencies.
 
-### 2. Dryad API (For Ballistic Gunshots)
+### Step 1: Create your `.env` file from the template
 ```bash
-export DRYAD_API_TOKEN="your_dryad_bearer_token"
+cp .env.example .env
 ```
-*(If token is not supplied, drop raw multi-mic gunshot WAVs into `data/raw/gunshot_dryad/`)*.
+
+### Step 2: Configure Credentials & Workstation Parameters (Optional)
+```dotenv
+# Kaggle API: Required for full Military Audio Dataset (MAD, 8,075 clips, ~1.1 GB)
+# Obtain token from https://www.kaggle.com/settings -> API -> Create New Token
+KAGGLE_USERNAME=your_kaggle_username
+KAGGLE_KEY=your_kaggle_api_key
+
+# Data Dryad Bearer Token: For downloading ballistic gunshot acoustic measurements
+DRYAD_API_TOKEN=your_dryad_bearer_token
+
+# Audio Standards (ITU-R BS.1770-4 & DSP Defaults)
+DATA_FORGE_TARGET_SAMPLE_RATE=48000
+DATA_FORGE_TARGET_LUFS=-23.0
+DATA_FORGE_PEAK_LIMIT_DBFS=-1.0
+DATA_FORGE_VAD_THRESHOLD_DB=-50.0
+
+# Multi-Branch Synthesis Defaults
+DATA_FORGE_MAX_WORKERS=16
+DATA_FORGE_NUM_MIXTURES=200000
+DATA_FORGE_MIN_SNR=-5.0
+DATA_FORGE_MAX_SNR=20.0
+DATA_FORGE_SAMPLES_PER_SHARD=2048
+```
+*(If tokens are not supplied, the pipeline gracefully falls back to local drop-in audio placed in `data/raw/mad/` and `data/raw/gunshot_dryad/`)*.
 
 ---
 
