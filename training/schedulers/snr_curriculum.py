@@ -2,23 +2,42 @@
 training/schedulers/snr_curriculum.py — Optional easy-to-hard (or hard-to-easy)
 SNR curriculum over the course of training.
 
-GROUNDED, WITH AN HONEST CAVEAT: SNR-Decaying Curriculum Learning (SDCL,
-arXiv:2510.18533) validates an easy-to-hard schedule -- start at higher
-SNR (easier), exponentially decay the sampling distribution's mean toward
-harder (lower) SNR as training progresses. That's the DEFAULT direction
-implemented below.
+GROUNDED, WITH TWO HONEST CAVEATS (the second added on review -- the
+original docstring overstated the first citation's task-relevance):
 
-BUT: an earlier study on ASR under noise (Braun et al., 2017, as surveyed
-in arXiv:2101.10382) found the OPPOSITE ordering won for their task --
-starting with the hardest (lowest SNR) examples first and easing up
-outperformed easy-to-hard, and they explicitly tested both directions
-before reporting this. This is genuinely mixed evidence across tasks, not
-a settled question -- direction is left as a config flag
-(`direction="easy_to_hard"` vs `"hard_to_easy"`), defaulting to the more
-recent, task-closer (speech, not just ASR-adjacent) SDCL result, but
-BOTH should be tried against AEGIS's own validation curve before trusting
-either blindly. Do not treat the default as a confident recommendation --
-treat it as the more literature-supported starting point for an ablation.
+1. SNR-Decaying Curriculum Learning (SDCL, arXiv:2510.18533) validates an
+   easy-to-hard schedule -- start at higher SNR (easier), exponentially
+   decay the sampling distribution's mean toward harder (lower) SNR as
+   training progresses. That's the DEFAULT direction implemented below.
+   CORRECTION FROM REVIEW: this paper's title is "Noise-Conditioned
+   Mixture-of-Experts Framework for Robust Speaker Verification" (Gu et
+   al.) -- SDCL is one component of a larger speaker-verification system,
+   validated on VoxCeleb1 speaker-verification EER, NOT on speech
+   enhancement PESQ/STOI/SNR. The original docstring here implied more
+   direct task-relevance ("task-closer... speech, not just ASR-adjacent")
+   than the paper actually provides -- speaker verification and speech
+   enhancement are both "speech" tasks but optimize toward very different
+   objectives (identity discrimination vs. waveform reconstruction), and
+   a curriculum's interaction with the loss landscape is not guaranteed
+   to transfer between them. The underlying SDCL mechanism is still worth
+   testing here -- but as an idea borrowed across tasks, not a directly
+   validated one, which if anything strengthens (not weakens) the
+   "ablation, not a confident default" posture this module already takes.
+
+2. An earlier study on ASR under noise (Braun et al., 2017, as surveyed
+   in arXiv:2101.10382) found the OPPOSITE ordering won for their task --
+   starting with the hardest (lowest SNR) examples first and easing up
+   outperformed easy-to-hard, and they explicitly tested both directions
+   before reporting this. This is genuinely mixed evidence across tasks,
+   and neither citation here is a direct, same-task validation -- one is
+   speaker verification (SDCL), the other is ASR (Braun et al.), and this
+   module's actual task is speech enhancement. Direction is left as a
+   config flag (`direction="easy_to_hard"` vs `"hard_to_easy"`), with
+   `"easy_to_hard"` kept as the default only because it's the more
+   recently published of two imperfect analogues, not because either has
+   been shown to work for this specific task. BOTH directions should be
+   tried against AEGIS's own validation curve -- treat the default as a
+   starting point for an ablation, never as a settled recommendation.
 
 DISABLED by default for Models 1-3's base training run below (see
 `enabled: bool = False` in each SE config) -- curriculum scheduling is a

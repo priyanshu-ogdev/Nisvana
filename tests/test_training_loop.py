@@ -208,6 +208,57 @@ class TestWorstClassValidationInLoop:
         p2 = trainer.save_checkpoint(model_state={}, metrics=regressed_metrics)
         assert p2 is None, "Checkpoint should have been blocked due to wind regression"
 
+    def test_worst_class_guard_blocks_snr_regression(self, tmp_path):
+        cfg = BaseModelConfig(
+            model_key="test-model",
+            checkpoint_dir=tmp_path / "checkpoints",
+            log_dir=tmp_path / "logs",
+            worst_class_checkpoint=WorstClassCheckpointConfig(
+                enabled=True,
+                watched_classes=["wind"],
+                max_allowed_regression_snr_db=1.0,
+            ),
+        )
+        trainer = ConcreteTestTrainer(cfg)
+
+        # Baseline with healthy SNR
+        m1 = {"pesq_aggregate": 2.50, "pesq_wind": 2.30, "snr_wind": 15.0}
+        assert trainer.save_checkpoint(model_state={}, metrics=m1) is not None
+
+        # Aggregate improves, but wind SNR drops from 15.0 to 13.5 (drop of 1.5 > 1.0 dB tolerance)
+        m2 = {"pesq_aggregate": 2.80, "pesq_wind": 2.35, "snr_wind": 13.5}
+        assert trainer.save_checkpoint(model_state={}, metrics=m2) is None
+
+    def test_unconditional_banking_of_class_improvement(self, tmp_path):
+        """Validates that a class improvement is banked even on steps where aggregate doesn't move."""
+        cfg = BaseModelConfig(
+            model_key="test-model",
+            checkpoint_dir=tmp_path / "checkpoints",
+            log_dir=tmp_path / "logs",
+            worst_class_checkpoint=WorstClassCheckpointConfig(
+                enabled=True,
+                watched_classes=["wind"],
+                max_allowed_regression_pesq=0.05,
+            ),
+        )
+        trainer = ConcreteTestTrainer(cfg)
+
+        # Step 1: Baseline established (agg 2.50, wind 2.00)
+        m1 = {"pesq_aggregate": 2.50, "pesq_wind": 2.00}
+        assert trainer.save_checkpoint(model_state={}, metrics=m1) is not None
+
+        # Step 2: Wind jumps to 2.30, but aggregate remains 2.50 (no aggregate improvement)
+        m2 = {"pesq_aggregate": 2.50, "pesq_wind": 2.30}
+        # Checkpoint not saved because aggregate didn't improve...
+        assert trainer.save_checkpoint(model_state={}, metrics=m2) is None
+        # ...BUT wind's high-water mark must now be 2.30!
+
+        # Step 3: Aggregate rises to 2.70, but wind drops to 2.15 (-0.15 from 2.30 > 0.05 tolerance)
+        # Pre-fix bug would have compared 2.15 against stale 2.00 and wrongly accepted (+0.15).
+        # Fixed code compares against banked 2.30 and correctly rejects!
+        m3 = {"pesq_aggregate": 2.70, "pesq_wind": 2.15}
+        assert trainer.save_checkpoint(model_state={}, metrics=m3) is None
+
 
 class TestEmaIntegrationInTrainingLoop:
     """Tests Exponential Moving Average integration into the training loop."""
