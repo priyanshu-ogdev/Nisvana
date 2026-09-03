@@ -401,6 +401,24 @@ class TestCurriculumSchedulerInLoop:
         for s in samples:
             assert 11.0 <= s <= 19.0
 
+    def test_snr_curriculum_integrated_with_trainer(self, tmp_path):
+        cfg = BaseModelConfig(
+            model_key="curriculum-model",
+            checkpoint_dir=tmp_path / "checkpoints",
+            log_dir=tmp_path / "logs",
+            snr_curriculum=SnrCurriculumConfig(
+                enabled=True,
+                start_mean_snr_db=15.0,
+                end_mean_snr_db=0.0,
+                std_db=1.0,
+            ),
+        )
+        trainer = ConcreteTestTrainer(cfg)
+        snr_target = trainer.get_curriculum_snr(epoch=0)
+        assert snr_target is not None
+        assert 13.0 <= snr_target <= 17.0
+
+
 
 class TestTrainingConfigsAndWeighting:
     """Tests training configurations and dataset sample weighting."""

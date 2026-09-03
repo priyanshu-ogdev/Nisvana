@@ -48,6 +48,24 @@ class BaseTrainer(ABC):
         self.early_stopping_patience = getattr(self.config, "early_stopping_patience", 10)
         self.patience_counter = 0
 
+        # SNR Curriculum scheduler connection
+        self.snr_curriculum = getattr(config, "snr_curriculum", None)
+        if self.snr_curriculum and getattr(self.snr_curriculum, "enabled", False):
+            import numpy as np
+            self.curriculum_rng = np.random.default_rng(getattr(config, "seed", 1337))
+        else:
+            self.curriculum_rng = None
+
+    def get_curriculum_snr(self, epoch: Optional[int] = None) -> Optional[float]:
+        """Returns target SNR sampled from curriculum distribution for given epoch."""
+        if self.snr_curriculum and getattr(self.snr_curriculum, "enabled", False):
+            from training.schedulers.snr_curriculum import sample_snr_for_epoch
+            if epoch is None:
+                steps_per_epoch = getattr(self.config, "steps_per_epoch", 1000)
+                epoch = self.step // max(1, steps_per_epoch)
+            return sample_snr_for_epoch(self.snr_curriculum, epoch, self.curriculum_rng)
+        return None
+
     def get_lr(self, step: int) -> float:
         """Computes learning rate with linear warmup and cosine decay."""
         import math

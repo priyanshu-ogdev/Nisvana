@@ -133,6 +133,11 @@ class SePrimaryTrainer(BaseTrainer):
         res = {k: v.item() if isinstance(v, torch.Tensor) else v for k, v in losses.items()}
         res["loss"] = total_loss.item()
         res["lr"] = current_lr
+
+        curriculum_snr = self.get_curriculum_snr()
+        if curriculum_snr is not None:
+            res["curriculum_snr_target_db"] = curriculum_snr
+
         return res
 
     def eval_step(self, batch: Any) -> dict:

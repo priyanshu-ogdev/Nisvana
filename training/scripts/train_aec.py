@@ -30,8 +30,14 @@ def main():
           f"lr={config.lr_placeholder} batch_size={config.batch_size_placeholder} "
           f"data_source={config.data_source}")
 
+    try:
+        from data_forge.exporter import AegisAecIterableDataset
+        train_ds = AegisAecIterableDataset(config.data.aec_shards, split="train")
+    except ImportError:
+        train_ds = None
+
     from training.trainers.aec_trainer import AecGateTrainer
-    trainer = AecGateTrainer(config=config)
+    trainer = AecGateTrainer(config=config, train_dataset=train_ds)
     print(f"[{config.model_key}] Initialized AecGateTrainer (step={trainer.step}). Ready for fine-tuning.")
     return trainer
 
