@@ -27,6 +27,7 @@ data/forge/*
 data/shards/*
 data/checkpoints/*
 data/eval_reports/*
+data/onnx_models/*
 data/manifests/fetch_manifest.json
 data/manifests/pipeline_audit_report.*
 

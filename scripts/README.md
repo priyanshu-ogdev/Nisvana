@@ -19,7 +19,9 @@ scripts/
 ├── 10_train_classifier.sh/.ps1     # [Train] Model 4: Acoustic Environment & Gate Classifier
 ├── 11_train_aec.sh/.ps1            # [Train] Model 5: Acoustic Echo Cancellation (--force)
 ├── 12_train_all_models.sh/.ps1     # [Train] Sequential Multi-Model Master Orchestrator
-└── 13_evaluate_models.sh/.ps1      # [Eval] Multi-Model Audio Evaluation Suite (PESQ, STOI, SI-SNR, SSNR)
+├── 13_evaluate_models.sh/.ps1      # [Eval] Multi-Model Audio Evaluation Suite (PESQ, STOI, SI-SNR, SSNR)
+├── 14_run_acceptance_tests.sh/.ps1 # [Acceptance] Mission-Critical Defence Acceptance Test Suite
+└── 15_export_edge_onnx.sh/.ps1     # [Edge] ONNX Edge Model Exporter & Latency Profiler
 ```
 
 > **Cross-Platform**: All scripts are provided in dual implementations: hardened Bash (`.sh`) for Linux environments and PowerShell (`.ps1`) for Windows ML workstations.
@@ -207,9 +209,33 @@ scripts/
   bash scripts/13_evaluate_models.sh --model aegis-se-primary --num-samples 50 --split val
   # PowerShell: .\scripts\13_evaluate_models.ps1 --model aegis-se-primary --num-samples 50 --split val
 
-  # Evaluate all models across the board
-  bash scripts/13_evaluate_models.sh --model all
-  # PowerShell: .\scripts\13_evaluate_models.ps1 --model all
+---
+
+### `14_run_acceptance_tests.sh` / `.ps1`
+- **Purpose**: **Mission-Critical Defence Acceptance Test Suite**. Runs strict verification against all operational specifications:
+  - **Threshold Criteria**: Validates `PESQ > 2.5 MOS`, `STOI > 0.85 Intelligibility`, `SNR > 15.0 dB`.
+  - **Defence Disturbances**: Validates handling of impulsive gunshots & artillery, periodic drone UAV & helicopter rotors, low-frequency armored tank rumble, sirens, and turbulent wind.
+  - **Hybrid AI + ANC Pipeline**: Validates end-to-end integration of deep enhancement with the Normalized LMS adaptive filter.
+  - **Edge Hardware Readiness**: Validates ONNX exportability and frame latency profiling.
+- **Usage**:
+  ```bash
+  bash scripts/14_run_acceptance_tests.sh
+  # PowerShell: .\scripts\14_run_acceptance_tests.ps1
   ```
+
+---
+
+### `15_export_edge_onnx.sh` / `.ps1`
+- **Purpose**: **Edge Model Exporter & Latency Profiler**. Exports models to standard ONNX format with dynamic batch and time dimensions for embedded deployment (e.g. NVIDIA Jetson AGX Orin, edge SoCs, DSPs).
+- **Actions**:
+  - Exports PyTorch model to `data/onnx_models/<model_key>.onnx`.
+  - Benchmarks execution latency across 10ms, 20ms, or 40ms frame chunks and calculates Real-Time Factor (RTF).
+- **Usage**:
+  ```bash
+  # Export Model 1 for real-time edge streaming
+  bash scripts/15_export_edge_onnx.sh --model aegis-se-primary --chunk-ms 20.0
+  # PowerShell: .\scripts\15_export_edge_onnx.ps1 --model aegis-se-primary --chunk-ms 20.0
+  ```
+
 
 

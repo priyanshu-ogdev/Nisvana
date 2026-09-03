@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Project AEGIS — [06] Automated Test Runner
-# Runs the full 127-test suite verifying all subpackages.
+# Project AEGIS — [15] ONNX Edge Model Exporter & Latency Profiler
+# Exports models to ONNX format with dynamic shapes for NVIDIA Jetson AGX Orin & DSPs.
 # ==============================================================================
 
 set -euo pipefail
@@ -12,6 +12,6 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${ROOT_DIR}"
 PY_BIN="$(command -v python3 || command -v python)"
 
-echo "=== PROJECT AEGIS: RUNNING ALL UNIT & INTEGRATION TESTS ==="
-${PY_BIN} -m pytest -v "${ROOT_DIR}/tests" "$@"
-echo "=== ALL TESTS PASSED ==="
+echo "=== PROJECT AEGIS: EXPORTING MODEL TO ONNX FOR EDGE HARDWARE ==="
+${PY_BIN} -m inference.scripts.export_onnx "$@"
+echo "=== ONNX EXPORT COMPLETED ==="
