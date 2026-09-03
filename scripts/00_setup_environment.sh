@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Project AEGIS — Environment Setup & Directory Initialization
+# Project AEGIS — [00] Environment Setup & Directory Initialization
 # Prepares the server environment for multi-terabyte Data-Forge pipeline runs.
 # ==============================================================================
 
@@ -29,37 +29,7 @@ ${PY_BIN} -m pip install pytest webdataset torch --extra-index-url https://downl
 
 # 3. Directory Structure Initialization
 echo ">>> Initializing complete data/ storage hierarchy..."
-DATA_DIR="${ROOT_DIR}/data"
-mkdir -p "${DATA_DIR}/raw/noisex92"
-mkdir -p "${DATA_DIR}/raw/shared_explosions"
-mkdir -p "${DATA_DIR}/raw/gunshot_dryad"
-mkdir -p "${DATA_DIR}/raw/drone_audioset"
-mkdir -p "${DATA_DIR}/raw/mad"
-mkdir -p "${DATA_DIR}/raw/vctk_demand"
-mkdir -p "${DATA_DIR}/raw/dns_challenge/noise_fullband"
-mkdir -p "${DATA_DIR}/raw/aec_challenge"
-mkdir -p "${DATA_DIR}/raw/sirens_urban"
-mkdir -p "${DATA_DIR}/raw/openslr_rirs/rir_wavs"
-
-mkdir -p "${DATA_DIR}/processed"
-mkdir -p "${DATA_DIR}/augmented"
-mkdir -p "${DATA_DIR}/splits"
-mkdir -p "${DATA_DIR}/manifests"
-
-mkdir -p "${DATA_DIR}/forge/branch_speech_enhancement/noisy"
-mkdir -p "${DATA_DIR}/forge/branch_speech_enhancement/clean"
-mkdir -p "${DATA_DIR}/forge/branch_speech_enhancement/rir"
-mkdir -p "${DATA_DIR}/forge/branch_classifier/audio"
-mkdir -p "${DATA_DIR}/forge/branch_aec/mic"
-mkdir -p "${DATA_DIR}/forge/branch_aec/farend"
-mkdir -p "${DATA_DIR}/forge/branch_aec/nearend"
-mkdir -p "${DATA_DIR}/forge/branch_aec/echo"
-
-mkdir -p "${DATA_DIR}/shards/speech_enhancement"
-mkdir -p "${DATA_DIR}/shards/classifier"
-mkdir -p "${DATA_DIR}/shards/aec"
-
-echo ">>> Directory hierarchy initialized."
+bash "${SCRIPT_DIR}/05_clean_data_pipeline.sh"
 
 # 4. Check Optional API Credentials
 echo ">>> Checking external dataset API tokens..."

@@ -1,15 +1,38 @@
-# Python bytecode & caches
+# ==============================================================================
+# Project AEGIS — .gitignore
+# ==============================================================================
+
+# Python bytecode, compilation artifacts, & caches
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
 .pytest_cache/
+.coverage
+htmlcov/
 
-# Large training data directories (stored on high-capacity server volume)
-data/raw/
-data/processed/
-data/augmented/
-data/forge/
-data/shards/*.tar
+# Logs, temporary files, & background task artifacts
+*.log
+logs/
+.system_generated/
+*.swp
+*.swo
+
+# Large training data and generated pipeline directories
+data/raw/*
+data/processed/*
+data/augmented/*
+data/splits/*
+data/forge/*
+data/shards/*
+data/manifests/fetch_manifest.json
+data/manifests/pipeline_audit_report.*
+
+# Ensure .gitkeep markers are tracked so directory skeletons persist
+!data/**/.gitkeep
+!data/manifests/verified_bibliography.json
+
+# Audio and archive file extensions
 *.zip
 *.tar
 *.tar.gz
@@ -18,7 +41,20 @@ data/shards/*.tar
 *.part*
 *.pkl
 *.parquet
+*.wav
+*.flac
+*.mp3
+*.ogg
 
-# Virtual environments
+# Virtual environments & local configurations
 venv/
 .env/
+.env.*
+env/
+ENV/
+
+# IDE configurations
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

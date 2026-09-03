@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Project AEGIS — Standalone WebDataset Sharding Script
+# Project AEGIS — [04] Standalone WebDataset Sharding Script
 # Repacks data/forge/ outputs into sequential .tar shards with auto-generated DATASET_CARD.md
 # ==============================================================================
 

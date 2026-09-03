@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Project AEGIS — Full Production Pipeline Orchestrator (4 TB Server)
+# Project AEGIS — [03] Full Production Data Pipeline Orchestrator (4 TB Server)
 # Runs the full multi-terabyte download, 10-step preprocessing, augmentation,
 # multi-branch forge mixing, WebDataset shard export, and pipeline verification.
 # ==============================================================================
@@ -54,7 +54,7 @@ echo "==========================================================================
 START_TIME=$(date +%s)
 
 # Step 0: Ensure directory tree exists
-bash "${SCRIPT_DIR}/setup_environment.sh"
+bash "${SCRIPT_DIR}/00_setup_environment.sh"
 
 # Step 1: Multi-Source Download in Server Mode
 echo ""
