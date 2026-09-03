@@ -64,34 +64,9 @@ class SePrimaryTrainer(BaseTrainer):
         self.init_ema(self.model)
 
     def build_model(self) -> nn.Module:
-        """
-        Builds the model architecture. If DeepFilterNet3 is installed, loads
-        its backbone; otherwise provides a linear/conv baseline wrapper
-        guaranteeing the forward/backward pass works out-of-the-box.
-        """
-        # Baseline lightweight audio layer for training loop testing & execution
-        class DeepFilterNet3Stub(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.conv1 = nn.Conv1d(1, 16, kernel_size=7, stride=1, padding=3)
-                self.gru = nn.GRU(16, 16, batch_first=True)
-                self.conv2 = nn.Conv1d(16, 1, kernel_size=7, stride=1, padding=3)
-
-            def forward(self, x: torch.Tensor) -> torch.Tensor:
-                # x: (batch, samples)
-                orig_shape = x.shape
-                if x.dim() == 1:
-                    x = x.unsqueeze(0)
-                if x.dim() == 2:
-                    x = x.unsqueeze(1)
-                h = torch.relu(self.conv1(x))
-                h = h.transpose(1, 2)
-                h, _ = self.gru(h)
-                h = h.transpose(1, 2)
-                out = self.conv2(h)
-                return out.view(orig_shape)
-
-        return DeepFilterNet3Stub()
+        """Builds model architecture via unified model factory."""
+        from training.models.model_loader import build_model_for_key
+        return build_model_for_key(self.config.model_key, self.config)
 
     def training_step(self, batch: Any) -> dict:
         self.model.train()
@@ -154,21 +129,8 @@ class SePrimaryTrainer(BaseTrainer):
                 clean = torch.tensor(clean, dtype=torch.float32)
 
             enhanced = self.model(noisy)
-
-            # Compute empirical SNR (dB)
-            noise_err = enhanced - clean
-            s_pwr = torch.mean(clean ** 2).clamp_min(1e-10)
-            n_pwr = torch.mean(noise_err ** 2).clamp_min(1e-10)
-            snr_db = float(10.0 * torch.log10(s_pwr / n_pwr).item())
-
-            # PESQ proxy based on spectral distance
-            spec_loss = torch.mean(torch.abs(enhanced - clean)).item()
-            pesq_proxy = float(max(1.0, min(4.5, 4.5 - spec_loss * 5.0)))
-
             cls_name = meta.get("unified_class", "general_noise") if isinstance(meta, dict) else "general_noise"
 
-            return {
-                "pesq_aggregate": pesq_proxy,
-                f"pesq_{cls_name}": pesq_proxy,
-                f"snr_{cls_name}": snr_db,
-            }
+            from training.utils.metrics import build_eval_metrics_dict
+            return build_eval_metrics_dict(enhanced, clean, [cls_name])
+

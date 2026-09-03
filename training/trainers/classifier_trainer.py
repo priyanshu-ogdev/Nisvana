@@ -48,30 +48,8 @@ class ClassifierTrainer(BaseTrainer):
 
     def build_model(self) -> nn.Module:
         """Lightweight 1D CNN + pooling classifier for audio clips."""
-        class AudioClassifier(nn.Module):
-            def __init__(self, num_classes: int = 3):
-                super().__init__()
-                self.features = nn.Sequential(
-                    nn.Conv1d(1, 32, kernel_size=15, stride=4, padding=7),
-                    nn.BatchNorm1d(32),
-                    nn.ReLU(),
-                    nn.MaxPool1d(4),
-                    nn.Conv1d(32, 64, kernel_size=15, stride=4, padding=7),
-                    nn.BatchNorm1d(64),
-                    nn.ReLU(),
-                    nn.AdaptiveAvgPool1d(1),
-                )
-                self.fc = nn.Linear(64, num_classes)
-
-            def forward(self, x: torch.Tensor) -> torch.Tensor:
-                if x.dim() == 1:
-                    x = x.unsqueeze(0).unsqueeze(0)
-                elif x.dim() == 2:
-                    x = x.unsqueeze(1)
-                feat = self.features(x).squeeze(-1)
-                return self.fc(feat)
-
-        return AudioClassifier(num_classes=len(GATE_CLASSES))
+        from training.models.model_loader import build_model_for_key
+        return build_model_for_key(self.config.model_key, self.config)
 
     def training_step(self, batch: Any) -> dict:
         self.model.train()

@@ -40,22 +40,8 @@ class AecGateTrainer(BaseTrainer):
 
     def build_model(self) -> nn.Module:
         """Lightweight 2-channel AEC linear/conv baseline."""
-        class AecNet(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.filter = nn.Conv1d(2, 1, kernel_size=15, padding=7)
-
-            def forward(self, mic: torch.Tensor, farend: torch.Tensor) -> torch.Tensor:
-                if mic.dim() == 1:
-                    mic = mic.unsqueeze(0)
-                if farend.dim() == 1:
-                    farend = farend.unsqueeze(0)
-                x = torch.stack([mic, farend], dim=1)
-                echo_est = self.filter(x).squeeze(1)
-                cleaned = mic - echo_est
-                return cleaned
-
-        return AecNet()
+        from training.models.model_loader import build_model_for_key
+        return build_model_for_key(self.config.model_key, self.config)
 
     def training_step(self, batch: Any) -> dict:
         self.model.train()
