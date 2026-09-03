@@ -78,6 +78,8 @@ class ResolvedLossConfig:
     multires_spec_gamma: float = 0.3
     multires_fft_sizes: Optional[List[int]] = None
     local_snr_factor: float = 1e-3
+    si_snr_factor: float = 0.0
+    stft_consistency_factor: float = 0.0
 
     def __post_init__(self):
         if self.multires_fft_sizes is None:
@@ -133,11 +135,6 @@ if _TORCH_AVAILABLE:
 
             for n_fft in self.config.multires_fft_sizes:
                 if estimate.shape[-1] < n_fft:
-                    # Skip FFT sizes larger than the clip itself rather than
-                    # padding silently -- a caller passing 3s@48kHz clips
-                    # (this project's max_sample_len_s) will never hit this
-                    # for the configured [256,512,1024,2048] sizes, but a
-                    # unit test exercising short synthetic tensors might.
                     continue
                 est_mag, est_cplx = self._compressed_stft(estimate, n_fft)
                 tgt_mag, tgt_cplx = self._compressed_stft(target, n_fft)
@@ -163,10 +160,7 @@ if _TORCH_AVAILABLE:
         enhanced estimate and the clean target, computed per short frame
         rather than over the whole clip, so a single well-reconstructed
         loud segment can't mask a badly-reconstructed quiet one the way a
-        single scalar utterance-level SNR term can. This directly targets
-        the same failure mode this project's own research (Fraunhofer
-        low-SNR comparative study) found matters most: performance at the
-        hardest local moments, not the easy average.
+        single scalar utterance-level SNR term can.
         """
 
         def __init__(self, config: ResolvedLossConfig, frame_size: int = 480, hop_size: int = 240):
@@ -176,7 +170,6 @@ if _TORCH_AVAILABLE:
             self.hop_size = hop_size
 
         def _framewise_snr_db(self, estimate: "torch.Tensor", target: "torch.Tensor") -> "torch.Tensor":
-            # Unfold into overlapping frames: (..., n_frames, frame_size)
             tgt_frames = target.unfold(-1, self.frame_size, self.hop_size)
             err_frames = (estimate - target).unfold(-1, self.frame_size, self.hop_size)
 
@@ -195,11 +188,51 @@ if _TORCH_AVAILABLE:
                 return estimate.new_zeros(())
 
             local_snr = self._framewise_snr_db(estimate, target)
-            # Negative loss on SNR itself (maximize SNR == minimize -SNR),
-            # scaled by the config's local_snr_factor -- kept as a small
-            # weight (1e-3, per DfLossConfig) since this term operates on
-            # a very different numeric scale (dB) than the spectral terms.
             return self.config.local_snr_factor * (-local_snr.mean())
+
+    class SISnrLoss(nn.Module):
+        """
+        Scale-Invariant Signal-to-Noise Ratio (SI-SNR) loss.
+        Standard metric-aligned loss widely validated in Conv-TasNet, Demucs,
+        and DTLN literature. Maximizes energy alignment while being invariant
+        to global gain differences.
+        """
+        def __init__(self, eps: float = 1e-8):
+            super().__init__()
+            self.eps = eps
+
+        def forward(self, estimate: "torch.Tensor", target: "torch.Tensor") -> "torch.Tensor":
+            est_zm = estimate - torch.mean(estimate, dim=-1, keepdim=True)
+            tgt_zm = target - torch.mean(target, dim=-1, keepdim=True)
+
+            dot = torch.sum(est_zm * tgt_zm, dim=-1, keepdim=True)
+            tgt_energy = torch.sum(tgt_zm ** 2, dim=-1, keepdim=True) + self.eps
+
+            s_target = (dot / tgt_energy) * tgt_zm
+            e_noise = est_zm - s_target
+
+            si_snr = 10.0 * torch.log10(
+                (torch.sum(s_target ** 2, dim=-1) + self.eps) /
+                (torch.sum(e_noise ** 2, dim=-1) + self.eps)
+            )
+            return -torch.mean(si_snr)
+
+    class StftConsistencyLoss(nn.Module):
+        """
+        Penalizes inconsistency between the complex STFT representation and
+        a physically valid time-domain signal.
+        """
+        def __init__(self, n_fft: int = 512, hop: int = 128):
+            super().__init__()
+            self.n_fft = n_fft
+            self.hop = hop
+
+        def forward(self, estimate: "torch.Tensor") -> "torch.Tensor":
+            window = torch.hann_window(self.n_fft, device=estimate.device, dtype=estimate.dtype)
+            spec = torch.stft(estimate, n_fft=self.n_fft, hop_length=self.hop, window=window, return_complex=True)
+            reconstructed = torch.istft(spec, n_fft=self.n_fft, hop_length=self.hop, window=window, length=estimate.shape[-1])
+            spec_recon = torch.stft(reconstructed, n_fft=self.n_fft, hop_length=self.hop, window=window, return_complex=True)
+            return F.l1_loss(torch.view_as_real(spec), torch.view_as_real(spec_recon))
 
 
 def build_se_loss(config: Optional[ResolvedLossConfig] = None, prefer_vendored: bool = True):
@@ -207,11 +240,7 @@ def build_se_loss(config: Optional[ResolvedLossConfig] = None, prefer_vendored: 
     Entry point trainers should call. Returns a callable
     `loss_fn(estimate, target) -> dict[str, Tensor]` including at least a
     "total" key. Prefers the real vendored DeepFilterNet loss when
-    installed; falls back to the from-scratch implementation above
-    otherwise, and tells you which one it picked (logged, not silent) so a
-    training run's logs make clear whether the vendored or fallback path
-    was actually used -- important given the two are not guaranteed
-    numerically identical.
+    installed; falls back to the from-scratch implementation otherwise.
     """
     if config is None:
         config = ResolvedLossConfig()
@@ -239,12 +268,26 @@ def build_se_loss(config: Optional[ResolvedLossConfig] = None, prefer_vendored: 
 
     spectral = MultiResSpectralLoss(config)
     local_snr = LocalSnrLoss(config)
+    si_snr = SISnrLoss() if config.si_snr_factor > 0 else None
+    consistency = StftConsistencyLoss() if config.stft_consistency_factor > 0 else None
 
     def _combined(estimate: "torch.Tensor", target: "torch.Tensor") -> dict:
         spec_out = spectral(estimate, target)
         snr_out = local_snr(estimate, target)
         spec_out["local_snr_loss"] = snr_out
-        spec_out["total"] = spec_out["multires_total"] + snr_out
+        total = spec_out["multires_total"] + snr_out
+
+        if si_snr is not None:
+            si_loss = config.si_snr_factor * si_snr(estimate, target)
+            spec_out["si_snr_loss"] = si_loss
+            total = total + si_loss
+
+        if consistency is not None:
+            cons_loss = config.stft_consistency_factor * consistency(estimate)
+            spec_out["stft_consistency_loss"] = cons_loss
+            total = total + cons_loss
+
+        spec_out["total"] = total
         return spec_out
 
     return _combined

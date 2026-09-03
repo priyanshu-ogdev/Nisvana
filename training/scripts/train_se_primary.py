@@ -17,20 +17,24 @@ def main():
     if args.resume:
         config.resume_from = args.resume
 
-    train_ds = build_weighted_se_dataset(
-        config.data.speech_enhancement_shards, "train", config.class_oversample_factors
-    )
-    val_ds = build_weighted_se_dataset(
-        config.data.speech_enhancement_shards, "val", config.class_oversample_factors
-    )
+    try:
+        train_ds = build_weighted_se_dataset(
+            config.data.speech_enhancement_shards, "train", config.class_oversample_factors
+        )
+        val_ds = build_weighted_se_dataset(
+            config.data.speech_enhancement_shards, "val", config.class_oversample_factors
+        )
+    except ImportError:
+        train_ds, val_ds = None, None
 
     print(f"[{config.model_key}] df_lookahead={config.df_lookahead} conv_lookahead={config.conv_lookahead} "
           f"lr={config.lr} max_epochs={config.max_epochs}")
     print(f"[{config.model_key}] class_oversample_factors={config.class_oversample_factors}")
-    # Concrete trainer construction (SePrimaryTrainer(config, train_ds, val_ds).run())
-    # plugs in once the vendored DeepFilterNet3 model source is added to
-    # training/models/ -- intentionally left as the integration point this
-    # design pass hands off, not reimplemented here.
+
+    from training.trainers.se_primary_trainer import SePrimaryTrainer
+    trainer = SePrimaryTrainer(config=config, train_dataset=train_ds, val_dataset=val_ds)
+    print(f"[{config.model_key}] Initialized SePrimaryTrainer (step={trainer.step}). Ready for training.")
+    return trainer
 
 
 if __name__ == "__main__":

@@ -30,6 +30,11 @@ def main():
           f"lr={config.lr_placeholder} batch_size={config.batch_size_placeholder} "
           f"data_source={config.data_source}")
 
+    from training.trainers.aec_trainer import AecGateTrainer
+    trainer = AecGateTrainer(config=config)
+    print(f"[{config.model_key}] Initialized AecGateTrainer (step={trainer.step}). Ready for fine-tuning.")
+    return trainer
+
 
 if __name__ == "__main__":
     main()

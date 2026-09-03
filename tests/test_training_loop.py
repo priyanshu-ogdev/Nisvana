@@ -373,3 +373,114 @@ class TestTrainingConfigsAndWeighting:
 
         w_upsampled = compute_sample_weight("tank_tracked", SyncTier.TIER_3_UPSAMPLED_16K, factors)
         assert w_upsampled == 6.0 * 0.25
+
+
+class TestConcreteModelTrainers:
+    """Tests concrete trainers for Models 1 through 5."""
+
+    def test_se_primary_trainer_step_and_eval(self, tmp_path):
+        import torch
+        from training.trainers.se_primary_trainer import SePrimaryTrainer
+        cfg = SePrimaryConfig(
+            checkpoint_dir=tmp_path / "checkpoints",
+            log_dir=tmp_path / "logs",
+        )
+        trainer = SePrimaryTrainer(config=cfg)
+
+        # 1. Training step with synthetic batch
+        noisy = torch.randn(2, 4800)
+        clean = torch.randn(2, 4800)
+        batch = {"noisy.wav": noisy, "clean.wav": clean, "json": {"unified_class": "tank_tracked"}}
+
+        out = trainer.training_step(batch)
+        assert "loss" in out
+        assert "multires_total" in out
+        assert "local_snr_loss" in out
+
+        # 2. Eval step
+        eval_out = trainer.eval_step(batch)
+        assert "pesq_aggregate" in eval_out
+        assert "pesq_tank_tracked" in eval_out
+        assert "snr_tank_tracked" in eval_out
+
+    def test_se_escalation_trainer_instantiation(self, tmp_path):
+        from training.trainers.se_escalation_trainer import SeEscalationTrainer
+        cfg = SeEscalationConfig(
+            checkpoint_dir=tmp_path / "checkpoints",
+            log_dir=tmp_path / "logs",
+        )
+        trainer = SeEscalationTrainer(config=cfg)
+        assert trainer.config.df_lookahead == 2
+        assert trainer.config.conv_lookahead == 2
+
+    def test_classifier_trainer_step_and_eval(self, tmp_path):
+        import torch
+        from training.trainers.classifier_trainer import ClassifierTrainer
+        cfg = ClassifierConfig(
+            checkpoint_dir=tmp_path / "checkpoints",
+            log_dir=tmp_path / "logs",
+        )
+        trainer = ClassifierTrainer(config=cfg)
+
+        wav = torch.randn(2, 4800)
+        batch = {"wav": wav, "json": {"category_index": 1}}
+
+        train_out = trainer.training_step(batch)
+        assert "loss" in train_out
+        assert "accuracy" in train_out
+
+        eval_out = trainer.eval_step(batch)
+        assert "accuracy" in eval_out
+
+    def test_aec_trainer_step(self, tmp_path):
+        import torch
+        from training.trainers.aec_trainer import AecGateTrainer
+        cfg = AecGateConfig(
+            checkpoint_dir=tmp_path / "checkpoints",
+            log_dir=tmp_path / "logs",
+        )
+        trainer = AecGateTrainer(config=cfg)
+
+        mic = torch.randn(2, 4800)
+        farend = torch.randn(2, 4800)
+        batch = {"mic.wav": mic, "farend.wav": farend}
+
+        out = trainer.training_step(batch)
+        assert "loss" in out
+        assert "erle_proxy" in out
+
+
+class TestTrainingCliScripts:
+    """Tests execution of the 5 training CLI scripts."""
+
+    def test_train_se_primary_cli(self, monkeypatch):
+        import training.scripts.train_se_primary as m1
+        monkeypatch.setattr("sys.argv", ["train_se_primary.py"])
+        trainer = m1.main()
+        assert trainer.config.model_key == "aegis-se-primary"
+
+    def test_train_se_escalation_cli(self, monkeypatch):
+        import training.scripts.train_se_escalation as m2
+        monkeypatch.setattr("sys.argv", ["train_se_escalation.py"])
+        trainer = m2.main()
+        assert trainer.config.model_key == "aegis-se-escalation"
+
+    def test_train_se_crosscheck_cli(self, monkeypatch):
+        import training.scripts.train_se_crosscheck as m3
+        monkeypatch.setattr("sys.argv", ["train_se_crosscheck.py"])
+        trainer = m3.main()
+        assert trainer.config.model_key == "aegis-se-crosscheck"
+
+    def test_train_classifier_cli(self, monkeypatch):
+        import training.scripts.train_classifier as m4
+        monkeypatch.setattr("sys.argv", ["train_classifier.py"])
+        trainer = m4.main()
+        assert trainer.config.model_key == "aegis-clf-gate"
+
+    def test_train_aec_cli(self, monkeypatch):
+        import training.scripts.train_aec as m5
+        monkeypatch.setattr("sys.argv", ["train_aec.py", "--force"])
+        trainer = m5.main()
+        assert trainer.config.model_key == "aegis-aec-gate"
+
+

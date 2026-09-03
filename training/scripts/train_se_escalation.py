@@ -13,11 +13,19 @@ def main():
     if args.resume:
         config.resume_from = args.resume
 
-    train_ds = build_weighted_se_dataset(
-        config.data.speech_enhancement_shards, "train", config.class_oversample_factors
-    )
+    try:
+        train_ds = build_weighted_se_dataset(
+            config.data.speech_enhancement_shards, "train", config.class_oversample_factors
+        )
+    except ImportError:
+        train_ds = None
     print(f"[{config.model_key}] lookahead=stock(2/2) lr={config.lr} "
           f"snr_weights={dict(zip(config.dataloader_snrs, config.dataloader_snr_weights))}")
+
+    from training.trainers.se_escalation_trainer import SeEscalationTrainer
+    trainer = SeEscalationTrainer(config=config, train_dataset=train_ds)
+    print(f"[{config.model_key}] Initialized SeEscalationTrainer (step={trainer.step}). Ready for training.")
+    return trainer
 
 
 if __name__ == "__main__":

@@ -121,12 +121,35 @@ class TestNumericBehaviorWithTorch:
     def test_build_se_loss_falls_back_when_vendored_package_absent(self):
         mrl = _load_module()
         # Force the fallback path explicitly regardless of whether
-        # deepfilternet[train] happens to be installed on this machine --
-        # this test is about the fallback's own correctness, not about
-        # which path gets auto-selected.
+        # deepfilternet[train] happens to be installed on this machine
         combined = mrl.build_se_loss(prefer_vendored=False)
         import torch
         x = torch.randn(1, 16000)
         out = combined(x, x.clone())
         assert "total" in out
         assert out["total"].item() < 1e-3
+
+    def test_si_snr_loss_correctness(self):
+        """SI-SNR loss should be significantly lower for a clean estimate than a noisy one."""
+        import torch
+        mrl = _load_module()
+        loss_fn = mrl.SISnrLoss()
+
+        target = torch.randn(2, 8000)
+        good_est = target + 0.01 * torch.randn(2, 8000)
+        poor_est = target + 1.0 * torch.randn(2, 8000)
+
+        good_loss = loss_fn(good_est, target)
+        poor_loss = loss_fn(poor_est, target)
+        assert good_loss.item() < poor_loss.item()
+
+    def test_stft_consistency_loss_near_zero_for_valid_signal(self):
+        """A valid time-domain signal should have low STFT consistency error."""
+        import torch
+        mrl = _load_module()
+        loss_fn = mrl.StftConsistencyLoss(n_fft=256, hop=64)
+
+        x = torch.randn(1, 2048)
+        loss = loss_fn(x)
+        assert loss.item() < 1e-3
+
