@@ -1,0 +1,24 @@
+# Python bytecode & caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Large training data directories (stored on high-capacity server volume)
+data/raw/
+data/processed/
+data/augmented/
+data/forge/
+data/shards/*.tar
+*.zip
+*.tar
+*.tar.gz
+*.tar.bz2
+*.tgz
+*.part*
+*.pkl
+*.parquet
+
+# Virtual environments
+venv/
+.env/

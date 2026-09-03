@@ -1,0 +1,20 @@
+# Core
+numpy>=1.24
+scipy>=1.10
+soundfile>=0.12
+pandas>=2.0
+pyarrow>=14.0        # parquet reading (DroneAudioSet fetcher)
+requests>=2.31
+
+# Preprocessing
+pyloudnorm>=0.1.1    # ITU-R BS.1770-4 LUFS normalization (step3_loudness)
+
+# Fetchers
+kaggle>=1.6          # required for mad.py's real audio download (GitHub only hosts annotations)
+
+# Export / industry-standard training format (optional at build time, required to consume shards)
+webdataset>=0.2.90
+torch>=2.1           # only needed by data_forge.exporter.torch_dataset consumers, not by the pipeline itself
+
+# Testing
+pytest>=8.0
