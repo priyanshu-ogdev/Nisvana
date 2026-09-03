@@ -23,7 +23,8 @@ scripts/
 ├── 14_run_acceptance_tests.sh/.ps1 # [Acceptance] Mission-Critical Defence Acceptance Test Suite
 ├── 15_export_edge_onnx.sh/.ps1     # [Edge] ONNX Edge Model Exporter & Latency Profiler
 ├── 16_enhance_audio.sh/.ps1        # [Inference] Offline Audio File Enhancement Runner
-└── 17_live_stream_prototype.sh/.ps1# [Inference] Real-Time Live Microphone & Headset ANC Prototype
+├── 17_live_stream_prototype.sh/.ps1# [Inference] Real-Time Live Microphone & Headset ANC Prototype
+└── 18_verify_sih_compliance.sh/.ps1# [Audit] Official SIH Defence Benchmark & Compliance Runner
 ```
 
 > **Cross-Platform**: All scripts are provided in dual implementations: hardened Bash (`.sh`) for Linux environments and PowerShell (`.ps1`) for Windows ML workstations.
@@ -272,6 +273,24 @@ scripts/
   # PowerShell:
   .\scripts\17_live_stream_prototype.ps1 -duration 5.0 -chunk-ms 10.0
   ```
+
+---
+
+### `18_verify_sih_compliance.sh` / `.ps1`
+- **Purpose**: **Official SIH Defence Benchmark & Compliance Audit Runner**. Executes end-to-end verification against the exact problem statement criteria:
+  - Validates **$\text{SNR} > 15.0\text{ dB}$** (or $\Delta\text{SNR} \ge 15.0\text{ dB}$).
+  - Validates **$\text{STOI} > 0.85$** Intelligibility.
+  - Validates **$\text{PESQ} > 2.50\text{ MOS}$** Voice Quality.
+  - Validates **$\text{RTF} < 1.0$** Real-Time Latency constraint.
+  - Validates noise attenuation across all 7 defence disturbances: Gunshots, Artillery, Helicopter Rotors, Drone UAVs, Armored Tanks, Sirens, and Turbulent Wind.
+  - Validates Dual-Microphone (Primary + Reference) adaptive filtering and dynamic escalation routing.
+- **Usage**:
+  ```bash
+  bash scripts/18_verify_sih_compliance.sh
+  # PowerShell:
+  .\scripts\18_verify_sih_compliance.ps1
+  ```
+
 
 
 

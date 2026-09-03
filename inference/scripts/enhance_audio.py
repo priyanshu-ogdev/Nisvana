@@ -20,6 +20,7 @@ from inference.runtime.hybrid_anc import HybridAncPipeline
 from inference.runtime.audio_stream import StreamingAudioProcessor
 from inference.runtime.escalation_router import AcousticEscalationRouter
 from inference.utils.audio_io import load_audio_48k, save_audio_48k
+from inference.utils.sih_metrics import evaluate_sih_compliance
 from training.utils.metrics import (
     compute_snr_db,
     compute_stoi,
@@ -41,6 +42,8 @@ def main():
                         help="Enable secondary Normalized LMS adaptive filter stage.")
     parser.add_argument("--use-streaming", action="store_true", default=True,
                         help="Use overlap-add streaming processor.")
+    parser.add_argument("--reference-clean", "-c", type=str, default=None,
+                        help="Optional path to clean ground-truth audio to compute SIH Benchmark Scorecard.")
     parser.add_argument("--checkpoint", type=str, default=None,
                         help="Optional path to model checkpoint .pt file.")
     args = parser.parse_args()
@@ -120,6 +123,21 @@ def main():
     print(f"\n--- OBJECTIVE MOS ESTIMATION ---")
     print(f"  Input  DNSMOS (OVRL) : {dns_in['dnsmos_ovrl']:.2f} / 5.00")
     print(f"  Output DNSMOS (OVRL) : {dns_out['dnsmos_ovrl']:.2f} / 5.00")
+
+    # Evaluate against official SIH benchmarks if reference clean audio is provided
+    if args.reference_clean and Path(args.reference_clean).exists():
+        clean_ref, _ = load_audio_48k(args.reference_clean, target_sr=48000)
+        # Trim to matching length
+        min_len = min(len(clean_ref), len(enhanced), len(noisy_audio))
+        sih_res = evaluate_sih_compliance(
+            estimate=enhanced[:min_len],
+            target_clean=clean_ref[:min_len],
+            input_noisy=noisy_audio[:min_len],
+            sample_rate=48000,
+            latency_mean_ms=rtf * 10.0,
+            chunk_ms=10.0,
+        )
+        print("\n" + sih_res.format_markdown_table("OFFICIAL SIH DEFENCE BENCHMARK SCORECARD"))
 
 
 if __name__ == "__main__":
