@@ -48,10 +48,12 @@ data/manifests/pipeline_audit_report.*
 
 # Virtual environments & local configurations
 venv/
-.env/
+.env
 .env.*
+.env/
 env/
 ENV/
+!*.env.example
 
 # IDE configurations
 .vscode/

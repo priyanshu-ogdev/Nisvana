@@ -2,6 +2,7 @@
 Project AEGIS — Data-Forge Central Configuration and Policy Specifications
 """
 
+import os
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
@@ -9,23 +10,64 @@ from typing import Dict, List, Set, Optional
 
 
 # ==============================================================================
-# Path Definitions
+# Environment Configuration & .env Loader (Zero External Dependency)
 # ==============================================================================
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = REPO_ROOT / "data"
 
-RAW_DIR = DATA_DIR / "raw"
-PROCESSED_DIR = DATA_DIR / "processed"
-AUGMENTED_DIR = DATA_DIR / "augmented"
-SPLITS_DIR = DATA_DIR / "splits"
-FORGE_DIR = DATA_DIR / "forge"
-MANIFESTS_DIR = DATA_DIR / "manifests"
-SHARDS_DIR = DATA_DIR / "shards"  # WebDataset-format sharded export, industry-standard training input
+
+def _load_dotenv() -> None:
+    """Loads environment variables from .env if present."""
+    search_paths = [
+        Path.cwd() / ".env",
+        REPO_ROOT / ".env",
+        Path(__file__).resolve().parent / ".env",
+    ]
+    for env_file in search_paths:
+        if env_file.is_file():
+            try:
+                with open(env_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#") or "=" not in line:
+                            continue
+                        key, val = line.split("=", 1)
+                        key = key.strip()
+                        val = val.strip()
+                        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+                            val = val[1:-1]
+                        if key not in os.environ:
+                            os.environ[key] = val
+            except Exception:
+                pass
+            break
+
+
+_load_dotenv()
+
+
+# Optional API Credentials
+KAGGLE_USERNAME = os.environ.get("KAGGLE_USERNAME", "")
+KAGGLE_KEY = os.environ.get("KAGGLE_KEY", "")
+DRYAD_API_TOKEN = os.environ.get("DRYAD_API_TOKEN", "")
+
+
+# ==============================================================================
+# Path Definitions
+# ==============================================================================
+DATA_DIR = Path(os.environ.get("DATA_FORGE_DATA_DIR", REPO_ROOT / "data"))
+
+RAW_DIR = Path(os.environ.get("DATA_FORGE_RAW_DIR", DATA_DIR / "raw"))
+PROCESSED_DIR = Path(os.environ.get("DATA_FORGE_PROCESSED_DIR", DATA_DIR / "processed"))
+AUGMENTED_DIR = Path(os.environ.get("DATA_FORGE_AUGMENTED_DIR", DATA_DIR / "augmented"))
+SPLITS_DIR = Path(os.environ.get("DATA_FORGE_SPLITS_DIR", DATA_DIR / "splits"))
+FORGE_DIR = Path(os.environ.get("DATA_FORGE_FORGE_DIR", DATA_DIR / "forge"))
+MANIFESTS_DIR = Path(os.environ.get("DATA_FORGE_MANIFESTS_DIR", DATA_DIR / "manifests"))
+SHARDS_DIR = Path(os.environ.get("DATA_FORGE_SHARDS_DIR", DATA_DIR / "shards"))  # WebDataset-format sharded export
 
 # Shard sizing: ~2048 samples/shard keeps individual .tar files in the low-GB
 # range (sequential-read friendly for network/cloud storage) without creating
 # so many shard files that shard-listing itself becomes the bottleneck.
-SAMPLES_PER_SHARD = 2048
+SAMPLES_PER_SHARD = int(os.environ.get("DATA_FORGE_SAMPLES_PER_SHARD", "2048"))
 
 # Data Forge Model Branches
 BRANCH_SE = FORGE_DIR / "branch_speech_enhancement"  # Models 1-3: DeepFilterNet3, CleanUMamba
@@ -36,13 +78,17 @@ BRANCH_AEC = FORGE_DIR / "branch_aec"                # Model 5: Gated AEC
 # ==============================================================================
 # Audio Processing Standards (Part 3)
 # ==============================================================================
-TARGET_SAMPLE_RATE = 48000           # 48 kHz standard fullband
-TARGET_LUFS = -23.0                  # ITU-R BS.1770-4 loudness target
-TARGET_TRUE_PEAK_DBFS = -1.0         # Limiter ceiling to prevent inter-sample clipping
-DEFAULT_AUDIO_FORMAT = "WAV"
-DEFAULT_SUBTYPE = "PCM_16"           # 16-bit PCM standard (or PCM_24)
-MIN_ACTIVE_DURATION_SEC = 0.4        # Minimum non-silent speech/audio length
-SILENCE_ENERGY_THRESHOLD_DB = -50.0  # VAD threshold
+TARGET_SAMPLE_RATE = int(os.environ.get("DATA_FORGE_TARGET_SAMPLE_RATE", "48000"))  # 48 kHz standard fullband
+TARGET_LUFS = float(os.environ.get("DATA_FORGE_TARGET_LUFS", "-23.0"))              # ITU-R BS.1770-4 loudness target
+TARGET_TRUE_PEAK_DBFS = float(os.environ.get("DATA_FORGE_PEAK_LIMIT_DBFS", "-1.0")) # Limiter ceiling to prevent clipping
+DEFAULT_AUDIO_FORMAT = os.environ.get("DATA_FORGE_AUDIO_FORMAT", "WAV")
+DEFAULT_SUBTYPE = os.environ.get("DATA_FORGE_SUBTYPE", "PCM_16")                    # 16-bit PCM standard (or PCM_24)
+MIN_ACTIVE_DURATION_SEC = float(os.environ.get("DATA_FORGE_MIN_ACTIVE_SEC", "0.4")) # Minimum non-silent audio length
+SILENCE_ENERGY_THRESHOLD_DB = float(os.environ.get("DATA_FORGE_VAD_THRESHOLD_DB", "-50.0")) # VAD threshold
+DEFAULT_MAX_WORKERS = int(os.environ.get("DATA_FORGE_MAX_WORKERS", "16"))
+DEFAULT_NUM_MIXTURES = int(os.environ.get("DATA_FORGE_NUM_MIXTURES", "200000"))
+DEFAULT_MIN_SNR = float(os.environ.get("DATA_FORGE_MIN_SNR", "-5.0"))
+DEFAULT_MAX_SNR = float(os.environ.get("DATA_FORGE_MAX_SNR", "20.0"))
 
 
 # ==============================================================================

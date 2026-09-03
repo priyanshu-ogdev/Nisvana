@@ -290,3 +290,17 @@ class TestDatasetProfiles:
         profile = DATASET_PROFILES["mad"]
         assert profile.native_sample_rate == 48000
         assert profile.default_sync_tier == SyncTier.TIER_1_NATIVE_48K
+
+    def test_env_threshold_configuration(self):
+        from data_forge.config import (
+            TARGET_SAMPLE_RATE,
+            TARGET_LUFS,
+            TARGET_TRUE_PEAK_DBFS,
+            SAMPLES_PER_SHARD,
+            SILENCE_ENERGY_THRESHOLD_DB,
+        )
+        assert TARGET_SAMPLE_RATE == 48000
+        assert TARGET_LUFS == -23.0
+        assert TARGET_TRUE_PEAK_DBFS == -1.0
+        assert SAMPLES_PER_SHARD == 2048
+        assert SILENCE_ENERGY_THRESHOLD_DB == -50.0
