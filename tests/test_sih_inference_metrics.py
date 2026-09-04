@@ -97,6 +97,26 @@ class TestSihMetricsEvaluator:
 
         assert res.overall_compliant is False
 
+    def test_sih_evaluator_unmeasured_latency_cannot_pass(self):
+        """Validates that unmeasured latency (None or 0.0) is not falsely passed with fabricated RTF."""
+        clean = np.random.randn(48000).astype(np.float32) * 0.1
+        enhanced = clean + np.random.randn(48000).astype(np.float32) * 0.001
+        noisy = clean + np.random.randn(48000).astype(np.float32) * 0.05
+
+        res = evaluate_sih_compliance(
+            estimate=enhanced,
+            target_clean=clean,
+            input_noisy=noisy,
+            sample_rate=48000,
+            latency_mean_ms=0.0,
+            chunk_ms=10.0,
+        )
+
+        assert res.latency_passed is False
+        assert res.overall_compliant is False
+        md = res.format_markdown_table()
+        assert "UNMEASURED" in md
+
     def test_sih_markdown_table_formatting(self):
         """Verifies markdown scorecard formatting for reports."""
         res = SihEvaluationResult(

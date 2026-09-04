@@ -11,6 +11,15 @@ from training.models.model_loader import build_model_for_key
 from inference.engines.onnx_engine import export_to_onnx, benchmark_edge_latency
 
 
+MODEL_ALGORITHMIC_DELAY_MS = {
+    "aegis-se-primary": 0.0,      # 0ms lookahead (strictly causal streaming)
+    "aegis-se-escalation": 40.0,  # 40ms lookahead (severe SNR escalation)
+    "aegis-se-crosscheck": 0.0,   # Causal CleanUMamba backbone
+    "aegis-clf-gate": 0.0,        # Frame gating classifier
+    "aegis-aec-gate": 0.0,        # Causal adaptive filter
+}
+
+
 def main():
     parser = argparse.ArgumentParser(description="Export Project AEGIS models to ONNX for Edge / Jetson")
     parser.add_argument("--model", type=str, default="aegis-se-primary",
@@ -44,14 +53,16 @@ def main():
 
     if args.profile:
         print(f"\n--- PROFILING EDGE LATENCY (chunk={args.chunk_ms} ms) ---")
+        delay_ms = MODEL_ALGORITHMIC_DELAY_MS.get(args.model, 0.0)
         metrics = benchmark_edge_latency(
             model=model,
             sample_rate=args.sample_rate,
             chunk_ms=args.chunk_ms,
+            algorithmic_delay_ms=delay_ms,
             num_runs=30,
         )
         for k, v in metrics.items():
-            print(f"  {k:<20}: {v}")
+            print(f"  {k:<25}: {v}")
 
 
 if __name__ == "__main__":

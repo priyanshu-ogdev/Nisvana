@@ -80,6 +80,10 @@ class SihEvaluationResult:
         """Renders publication-grade GitHub Markdown table comparing against SIH criteria."""
         status_icon = lambda passed: "✅ PASS" if passed else "❌ REGRESSION"
         
+        rtf_display = f"{self.real_time_factor:.3f}x" if self.latency_mean_ms > 0 else "UNMEASURED"
+        lat_display = f"{self.latency_mean_ms:.2f} ms" if self.latency_mean_ms > 0 else "UNMEASURED"
+        lat_verdict = status_icon(self.latency_passed) if self.latency_mean_ms > 0 else "❌ UNVERIFIED"
+
         lines = [
             f"### {title}",
             "",
@@ -89,8 +93,8 @@ class SihEvaluationResult:
             f"| **STOI** | {self.stoi_in:.3f} | **{self.stoi_out:.3f}** | **> 0.850** | {status_icon(self.stoi_passed)} |",
             f"| **PESQ (MOS)** | — | **{self.pesq_out:.3f}** | **> 2.500** | {status_icon(self.pesq_passed)} |",
             f"| **DNSMOS (OVRL)** | — | **{self.dnsmos_ovrl:.2f}** | Objective Proxy | ℹ️ INFO |",
-            f"| **Real-Time Factor** | — | **{self.real_time_factor:.3f}x** | **< 1.000x (Real-Time)** | {status_icon(self.latency_passed)} |",
-            f"| **Frame Latency** | — | **{self.latency_mean_ms:.2f} ms** | Stream Budget | ℹ️ INFO |",
+            f"| **Real-Time Factor** | — | **{rtf_display}** | **< 1.000x (Real-Time)** | {lat_verdict} |",
+            f"| **Frame Latency** | — | **{lat_display}** | Stream Budget | ℹ️ INFO |",
             "",
             f"**Overall SIH Compliance**: {'✅ **ALL TARGETS MET**' if self.overall_compliant else '❌ **TARGETS NOT FULLY MET**'}",
             "",
@@ -103,7 +107,7 @@ def evaluate_sih_compliance(
     target_clean: Union[torch.Tensor, np.ndarray],
     input_noisy: Union[torch.Tensor, np.ndarray],
     sample_rate: int = 48000,
-    latency_mean_ms: float = 0.0,
+    latency_mean_ms: Optional[float] = None,
     chunk_ms: float = 10.0,
 ) -> SihEvaluationResult:
     """
@@ -113,7 +117,7 @@ def evaluate_sih_compliance(
         target_clean: Clean reference speech waveform.
         input_noisy: Corrupted input mixture waveform.
         sample_rate: 48,000 Hz.
-        latency_mean_ms: Mean processing latency per frame in ms.
+        latency_mean_ms: Mean processing latency per frame in ms. If unmeasured/None, latency is marked unverified.
         chunk_ms: Audio frame duration in ms.
     Returns:
         SihEvaluationResult with metrics and pass/fail boolean verdicts.
@@ -136,14 +140,21 @@ def evaluate_sih_compliance(
     dnsmos_ovrl = dns_res["dnsmos_ovrl"]
 
     # 5. Latency & Real-Time Factor
-    rtf = latency_mean_ms / max(chunk_ms, 1e-6) if latency_mean_ms > 0 else 0.1
+    if latency_mean_ms is not None and latency_mean_ms > 0.0:
+        rtf = latency_mean_ms / max(chunk_ms, 1e-6)
+        latency_passed = bool(rtf < SIH_TARGET_MAX_RTF)
+        lat_mean_val = float(latency_mean_ms)
+    else:
+        # Latency was unmeasured: do NOT fabricate an optimistic pass!
+        rtf = 0.0
+        latency_passed = False
+        lat_mean_val = 0.0
 
     # Verdict evaluations against SIH specifications:
     # SNR passes if output is > 15 dB OR if noise reduction exceeds 15 dB (e.g. from -10 dB to +5 dB)
     snr_passed = bool(snr_out >= SIH_TARGET_SNR_DB or delta_snr >= SIH_TARGET_DELTA_SNR_DB)
     stoi_passed = bool(stoi_out >= SIH_TARGET_STOI or (stoi_in < 0.60 and delta_stoi >= 0.20))
     pesq_passed = bool(pesq_val >= SIH_TARGET_PESQ)
-    latency_passed = bool(rtf < SIH_TARGET_MAX_RTF)
 
     overall_compliant = bool(snr_passed and stoi_passed and pesq_passed and latency_passed)
 
@@ -156,7 +167,7 @@ def evaluate_sih_compliance(
         delta_stoi=delta_stoi,
         pesq_out=pesq_val,
         dnsmos_ovrl=dnsmos_ovrl,
-        latency_mean_ms=latency_mean_ms,
+        latency_mean_ms=lat_mean_val,
         real_time_factor=rtf,
         snr_passed=snr_passed,
         stoi_passed=stoi_passed,

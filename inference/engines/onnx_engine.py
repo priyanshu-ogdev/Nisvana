@@ -80,6 +80,7 @@ def benchmark_edge_latency(
     model: nn.Module,
     sample_rate: int = 48000,
     chunk_ms: float = 10.0,
+    algorithmic_delay_ms: float = 0.0,
     num_runs: int = 50,
     warmup_runs: int = 10,
     device: Optional[torch.device] = None,
@@ -90,11 +91,12 @@ def benchmark_edge_latency(
         model: Neural speech enhancement or classifier model.
         sample_rate: 48000 Hz.
         chunk_ms: Audio chunk duration (e.g. 10 ms = 480 samples).
+        algorithmic_delay_ms: Known buffering or lookahead delay (e.g. 0.0 ms for primary, 40.0 ms for escalation).
         num_runs: Number of timing iterations.
         warmup_runs: Number of warm-up iterations.
         device: CPU or CUDA device.
     Returns:
-        Dictionary with latency_mean_ms, latency_p95_ms, real_time_factor, and meets_realtime.
+        Dictionary with compute latency, algorithmic delay, total latency, and RTF metrics.
     """
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -128,13 +130,20 @@ def benchmark_edge_latency(
     mean_ms = float(np.mean(latencies_ms))
     p95_ms = float(np.percentile(latencies_ms, 95))
     rtf = float(mean_ms / chunk_ms)
+    total_latency_ms = mean_ms + algorithmic_delay_ms
+    total_rtf = float(total_latency_ms / chunk_ms)
 
     return {
         "chunk_ms": chunk_ms,
         "chunk_samples": chunk_samples,
         "latency_mean_ms": round(mean_ms, 3),
+        "compute_latency_mean_ms": round(mean_ms, 3),
         "latency_p95_ms": round(p95_ms, 3),
+        "algorithmic_delay_ms": round(algorithmic_delay_ms, 3),
+        "total_latency_ms": round(total_latency_ms, 3),
         "real_time_factor": round(rtf, 4),
+        "compute_real_time_factor": round(rtf, 4),
+        "total_real_time_factor": round(total_rtf, 4),
         "meets_realtime": rtf < 1.0,
         "device": str(device),
     }

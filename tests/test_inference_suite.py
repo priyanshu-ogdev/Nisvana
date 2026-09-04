@@ -132,6 +132,22 @@ class TestAcousticEscalationRouter:
         assert out2.shape == (960,)
 
 
+    def test_router_crossfade_continuity_without_raw_audio(self):
+        router = AcousticEscalationRouter()
+        frame1 = np.random.randn(960).astype(np.float32) * 0.1
+        # Run in primary
+        _, meta1 = router.route_and_enhance(frame1, forced_mode="primary")
+        assert router.current_state == "primary"
+
+        # Now force switch to escalation: verify crossfade occurs cleanly without NaN or raw noise injection
+        frame2 = np.random.randn(960).astype(np.float32) * 0.1
+        out2, meta2 = router.route_and_enhance(frame2, forced_mode="escalation")
+        assert meta2["mode"] == "escalation"
+        assert router.current_state == "escalation"
+        assert not np.isnan(out2).any()
+        assert out2.shape == (960,)
+
+
 class TestOnnxRuntimeEngine:
     """Verifies accelerated ONNX Runtime execution."""
 
@@ -151,6 +167,24 @@ class TestOnnxRuntimeEngine:
         assert isinstance(enhanced, np.ndarray)
         assert enhanced.shape == (1, 480)
         assert not np.isnan(enhanced).any()
+
+    def test_benchmark_latency_includes_algorithmic_delay(self):
+        from inference.engines.onnx_engine import benchmark_edge_latency
+
+        model = build_model_for_key("aegis-se-primary")
+        res = benchmark_edge_latency(
+            model=model,
+            chunk_ms=10.0,
+            algorithmic_delay_ms=40.0,
+            num_runs=5,
+            warmup_runs=1,
+            device=torch.device("cpu"),
+        )
+        assert "algorithmic_delay_ms" in res
+        assert res["algorithmic_delay_ms"] == 40.0
+        assert "total_latency_ms" in res
+        assert res["total_latency_ms"] >= 40.0
+        assert "compute_latency_mean_ms" in res
 
 
 class TestQuantization:
@@ -183,3 +217,83 @@ class TestAudioIO:
         assert sr == 48000
         assert len(loaded) == len(original_wave)
         np.testing.assert_allclose(loaded, original_wave, atol=1e-3)
+
+
+class TestStreamingArchitectureAndCausality:
+    """Verifies causal zero-lookahead, escalation lookahead, streaming state, and unidirectional CleanUMamba."""
+
+    def test_causal_zero_lookahead_no_future_leakage(self):
+        """Validates that for conv_lookahead=0, modifying future input does NOT change past output."""
+        from training.models.model_loader import DeepFilterNet3Wrapper
+
+        model = DeepFilterNet3Wrapper(df_lookahead=0, conv_lookahead=0)
+        model.eval()
+
+        torch.manual_seed(42)
+        x1 = torch.randn(1, 200)
+        x2 = x1.clone()
+        # Perturb strictly in the future (t >= 150)
+        x2[:, 150:] += torch.randn(1, 50) * 2.0
+
+        model.reset_state()
+        with torch.no_grad():
+            y1 = model(x1)
+
+        model.reset_state()
+        with torch.no_grad():
+            y2 = model(x2)
+
+        # Output at t <= 140 must be IDENTICAL (no future leakage)
+        np.testing.assert_allclose(
+            y1[:, :140].numpy(),
+            y2[:, :140].numpy(),
+            rtol=1e-5,
+            atol=1e-5,
+            err_msg="Future perturbation altered past outputs in causal zero-lookahead model!",
+        )
+
+    def test_lookahead_escalation_absorbs_future_context(self):
+        """Validates that conv_lookahead > 0 provides asymmetric future receptive field."""
+        from training.models.model_loader import DeepFilterNet3Wrapper
+
+        m_causal = DeepFilterNet3Wrapper(df_lookahead=0, conv_lookahead=0)
+        m_lookahead = DeepFilterNet3Wrapper(df_lookahead=2, conv_lookahead=2)
+
+        assert m_causal.pad == (6, 0)      # left 6, right 0 (strictly causal)
+        assert m_lookahead.pad == (4, 2)   # left 4, right 2 (2 samples future lookahead)
+
+    def test_cleanumamba_unidirectional_and_causal(self):
+        """Validates that CleanUMamba uses strictly unidirectional GRU and causal encoder padding."""
+        from training.models.model_loader import CleanUMambaWrapper
+
+        model = CleanUMambaWrapper()
+        assert model.gru_mamba.bidirectional is False
+        assert model.dec.in_channels == 32
+
+        x = torch.randn(1, 480)
+        with torch.no_grad():
+            out = model(x)
+        assert out.shape == x.shape
+        assert not torch.isnan(out).any()
+
+    def test_recurrent_streaming_state_continuity(self):
+        """Validates that hidden state persists across sequential chunks and reset_state clears it."""
+        from training.models.model_loader import DeepFilterNet3Wrapper
+
+        model = DeepFilterNet3Wrapper(df_lookahead=0, conv_lookahead=0)
+        model.eval()
+        model.reset_state()
+
+        c1 = torch.randn(1, 100)
+        c2 = torch.randn(1, 100)
+
+        with torch.no_grad():
+            _ = model(c1)
+            assert model.hidden_state is not None
+            state_after_c1 = model.hidden_state.clone()
+
+            _ = model(c2)
+            assert not torch.equal(model.hidden_state, state_after_c1)
+
+            model.reset_state()
+            assert model.hidden_state is None

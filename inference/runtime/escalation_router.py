@@ -47,7 +47,7 @@ class AcousticEscalationRouter:
         self.bypass_snr_threshold_db = bypass_snr_threshold_db
         self.crossfade_samples = crossfade_samples
 
-        self.current_state = "primary"  # "bypass", "primary", or "escalation"
+        self.current_state: Optional[str] = None  # None until first audio frame is processed
         self.last_prediction: Dict[str, Union[str, float]] = {
             "mode": "primary",
             "category": "speech_dominant",
@@ -122,13 +122,24 @@ class AcousticEscalationRouter:
                 out_t = self.model_primary(in_t)
                 enhanced = out_t.squeeze().cpu().numpy()
 
-        # Handle smooth crossfade if mode switched
-        if target_mode != self.current_state and len(enhanced) >= self.crossfade_samples:
+        # Handle smooth crossfade if mode switched from an active prior state
+        if self.current_state is not None and target_mode != self.current_state and len(enhanced) >= self.crossfade_samples:
+            # Generate previous mode's enhanced output for transition blend
+            with torch.no_grad():
+                if self.current_state == "bypass":
+                    prev_enhanced = audio_chunk
+                elif self.current_state == "escalation":
+                    prev_out = self.model_escalation(in_t)
+                    prev_enhanced = prev_out.squeeze().cpu().numpy()
+                else:
+                    prev_out = self.model_primary(in_t)
+                    prev_enhanced = prev_out.squeeze().cpu().numpy()
+
             fade_in = np.linspace(0.0, 1.0, self.crossfade_samples, dtype=np.float32)
             fade_out = 1.0 - fade_in
-            # Blend beginning of chunk with previous state approximation
+            # Blend smoothly between previous mode's enhanced output and new mode's enhanced output
             enhanced[: self.crossfade_samples] = (
-                enhanced[: self.crossfade_samples] * fade_in + audio_chunk[: self.crossfade_samples] * fade_out
+                enhanced[: self.crossfade_samples] * fade_in + prev_enhanced[: self.crossfade_samples] * fade_out
             )
 
         self.current_state = target_mode
