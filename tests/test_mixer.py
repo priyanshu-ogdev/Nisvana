@@ -8,13 +8,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 import soundfile as sf
-from data_forge.config import ClassifierCategory, UnifiedClass
+from data_forge.config import ClassifierCategory, UnifiedClass, DATASET_PROFILES
 from data_forge.mixer import (
     AecBranch,
     ClassifierBranch,
     SnrMixerEngine,
     SpeechEnhancementBranch,
 )
+from data_forge.mixer.speech_enhancement import resolve_source_dataset
 
 
 @pytest.fixture
@@ -104,6 +105,59 @@ class TestSpeechEnhancementBranch:
             assert Path(rec["noisy_path"]).exists()
             assert Path(rec["clean_path"]).exists()
             assert Path(rec["rir_path"]).exists()
+
+    def test_source_dataset_resolves_correctly_including_multi_word_keys(self):
+        # Exercises longest-prefix-match resolution against DATASET_PROFILES
+        assert resolve_source_dataset("noisex92_leopard.wav") == "noisex92"
+        assert resolve_source_dataset("mad_gunshot_001.wav") == "mad"
+        assert resolve_source_dataset("gunshot_dryad_398398.wav") == "gunshot_dryad"
+        assert resolve_source_dataset("drone_audioset_clip04.wav") == "drone_audioset"
+        assert resolve_source_dataset("vctk_demand_p225_001.wav") == "vctk_demand"
+        assert resolve_source_dataset("sirens_urban_042.wav") == "sirens_urban"
+        assert resolve_source_dataset("openslr_rirs_ir017.wav") == "openslr_rirs"
+        assert resolve_source_dataset("totally_unknown_file.wav") == "unknown"
+
+    def test_sync_tier_resolution_matches_authoritative_profiles(self):
+        # Asserts sync tier lookup directly respects DATASET_PROFILES
+        assert DATASET_PROFILES["mad"].default_sync_tier.value == 1
+        assert DATASET_PROFILES["noisex92"].default_sync_tier.value == 3
+
+    def test_mixer_assigns_correct_sync_tier_from_source_dataset(self, clean_speech_sample, noise_sample, rir_sample, tmp_path):
+        speech, sr = clean_speech_sample
+        noise, _ = noise_sample
+        rir, _ = rir_sample
+
+        clean_path = tmp_path / "speech.wav"
+        sf.write(clean_path, speech, sr)
+        rir_path = tmp_path / "rir.wav"
+        sf.write(rir_path, rir, sr)
+
+        # Create two noise files: one NOISEX-92 (Tier 3), one MAD (Tier 1)
+        noise_tier3 = tmp_path / "noisex92_leopard.wav"
+        noise_tier1 = tmp_path / "mad_gunshot_001.wav"
+        sf.write(noise_tier3, noise, sr)
+        sf.write(noise_tier1, noise, sr)
+
+        branch_dir = tmp_path / "branch_se_sync"
+        branch = SpeechEnhancementBranch(output_dir=branch_dir)
+
+        records_t3 = branch.generate_mixtures(
+            clean_files=[clean_path],
+            noise_files=[noise_tier3],
+            rir_files=[rir_path],
+            num_mixtures=1,
+            split="train",
+        )
+        assert records_t3[0]["sync_tier"] == 3
+
+        records_t1 = branch.generate_mixtures(
+            clean_files=[clean_path],
+            noise_files=[noise_tier1],
+            rir_files=[rir_path],
+            num_mixtures=1,
+            split="train",
+        )
+        assert records_t1[0]["sync_tier"] == 1
 
 
 class TestClassifierBranch:

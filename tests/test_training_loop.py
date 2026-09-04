@@ -22,6 +22,11 @@ from training.callbacks.worst_class_checkpoint_selector import (
     WorstClassCheckpointConfig,
     WorstClassCheckpointSelector,
 )
+from training.callbacks.gradual_unfreezing import (
+    GradualUnfreezeConfig,
+    unfrozen_groups_at_epoch,
+    apply_freeze_schedule,
+)
 from training.data.spec_augment import SpecMixConfig, apply_spec_mix
 from training.schedulers.snr_curriculum import (
     SnrCurriculumConfig,
@@ -553,5 +558,87 @@ class TestTrainingCliScripts:
         monkeypatch.setattr("sys.argv", ["train_aec.py", "--force"])
         trainer = m5.main()
         assert trainer.config.model_key == "aegis-aec-gate"
+
+
+class TestGradualUnfreezingInTrainingLoop:
+    """Tests progressive layer unfreezing callback and integration in training loop."""
+
+    def test_gradual_unfreeze_schedule_progresses_last_to_first(self):
+        config = GradualUnfreezeConfig(epochs_per_unfreeze_step=3)
+        assert unfrozen_groups_at_epoch(config, 0) == ["df_decoder"]
+        assert unfrozen_groups_at_epoch(config, 3) == ["df_decoder", "erb_decoder"]
+        assert unfrozen_groups_at_epoch(config, 6) == ["df_decoder", "erb_decoder", "df_encoder"]
+        assert unfrozen_groups_at_epoch(config, 9) == ["df_decoder", "erb_decoder", "df_encoder", "erb_encoder"]
+        # Holds steady after all groups are unfrozen
+        assert unfrozen_groups_at_epoch(config, 100) == ["df_decoder", "erb_decoder", "df_encoder", "erb_encoder"]
+
+    def test_gradual_unfreeze_disabled_returns_everything_trainable(self):
+        config = GradualUnfreezeConfig(enabled=False)
+        assert unfrozen_groups_at_epoch(config, 0) == config.layer_groups_last_to_first
+
+    def test_gradual_unfreeze_correctly_disabled_per_model(self):
+        assert SePrimaryConfig().gradual_unfreeze.enabled is True
+        assert SeEscalationConfig().gradual_unfreeze.enabled is True
+        assert SeCrosscheckConfig().gradual_unfreeze.enabled is False   # possible from-scratch run
+        assert ClassifierConfig().gradual_unfreeze.enabled is False     # trains from scratch, nothing to protect
+
+    def test_apply_freeze_schedule_updates_requires_grad(self):
+        import torch
+        import torch.nn as nn
+
+        p1 = nn.Parameter(torch.randn(2, 2))
+        p2 = nn.Parameter(torch.randn(2, 2))
+        p3 = nn.Parameter(torch.randn(2, 2))
+        p4 = nn.Parameter(torch.randn(2, 2))
+
+        layer_map = {
+            "df_decoder": [p1],
+            "erb_decoder": [p2],
+            "df_encoder": [p3],
+            "erb_encoder": [p4],
+        }
+
+        config = GradualUnfreezeConfig(epochs_per_unfreeze_step=2)
+
+        # Epoch 0: only df_decoder unfrozen
+        unfrozen = apply_freeze_schedule(None, config, epoch=0, layer_group_map=layer_map)
+        assert unfrozen == ["df_decoder"]
+        assert p1.requires_grad is True
+        assert p2.requires_grad is False
+        assert p3.requires_grad is False
+        assert p4.requires_grad is False
+
+        # Epoch 2: df_decoder and erb_decoder unfrozen
+        unfrozen = apply_freeze_schedule(None, config, epoch=2, layer_group_map=layer_map)
+        assert unfrozen == ["df_decoder", "erb_decoder"]
+        assert p1.requires_grad is True
+        assert p2.requires_grad is True
+        assert p3.requires_grad is False
+        assert p4.requires_grad is False
+
+    def test_trainer_update_gradual_unfreezing_hook(self, tmp_path):
+        import torch
+        import torch.nn as nn
+
+        p1 = nn.Parameter(torch.randn(2, 2))
+        p2 = nn.Parameter(torch.randn(2, 2))
+        layer_map = {
+            "df_decoder": [p1],
+            "erb_decoder": [p2],
+            "df_encoder": [],
+            "erb_encoder": [],
+        }
+
+        cfg = BaseModelConfig(
+            model_key="unfreeze-model",
+            checkpoint_dir=tmp_path / "checkpoints",
+            log_dir=tmp_path / "logs",
+            gradual_unfreeze=GradualUnfreezeConfig(enabled=True, epochs_per_unfreeze_step=1),
+        )
+        trainer = ConcreteTestTrainer(cfg)
+        unfrozen = trainer.update_gradual_unfreezing(None, epoch=0, layer_group_map=layer_map)
+        assert unfrozen == ["df_decoder"]
+        assert p1.requires_grad is True
+        assert p2.requires_grad is False
 
 
