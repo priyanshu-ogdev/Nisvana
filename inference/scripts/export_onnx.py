@@ -8,16 +8,11 @@ import torch
 
 from data_forge.config import DATA_DIR
 from training.models.model_loader import build_model_for_key
-from inference.engines.onnx_engine import export_to_onnx, benchmark_edge_latency
-
-
-MODEL_ALGORITHMIC_DELAY_MS = {
-    "aegis-se-primary": 0.0,      # 0ms lookahead (strictly causal streaming)
-    "aegis-se-escalation": 40.0,  # 40ms lookahead (severe SNR escalation)
-    "aegis-se-crosscheck": 0.0,   # Causal CleanUMamba backbone
-    "aegis-clf-gate": 0.0,        # Frame gating classifier
-    "aegis-aec-gate": 0.0,        # Causal adaptive filter
-}
+from inference.engines.onnx_engine import (
+    export_to_onnx,
+    benchmark_edge_latency,
+    MODEL_ALGORITHMIC_DELAY_MS,
+)
 
 
 def main():

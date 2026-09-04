@@ -67,7 +67,7 @@ class TestSihMetricsEvaluator:
             target_clean=clean,
             input_noisy=noisy,
             sample_rate=48000,
-            latency_mean_ms=5.0,
+            total_latency_ms=5.0,
             chunk_ms=10.0,
         )
 
@@ -91,7 +91,7 @@ class TestSihMetricsEvaluator:
             target_clean=clean,
             input_noisy=heavy_noise,
             sample_rate=48000,
-            latency_mean_ms=50.0,
+            total_latency_ms=50.0,
             chunk_ms=10.0,
         )
 
@@ -108,7 +108,7 @@ class TestSihMetricsEvaluator:
             target_clean=clean,
             input_noisy=noisy,
             sample_rate=48000,
-            latency_mean_ms=0.0,
+            total_latency_ms=0.0,
             chunk_ms=10.0,
         )
 
@@ -128,7 +128,7 @@ class TestSihMetricsEvaluator:
             delta_stoi=0.36,
             pesq_out=3.25,
             dnsmos_ovrl=4.1,
-            latency_mean_ms=4.2,
+            total_latency_ms=4.2,
             real_time_factor=0.42,
             snr_passed=True,
             stoi_passed=True,

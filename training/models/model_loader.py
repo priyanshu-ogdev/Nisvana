@@ -7,20 +7,63 @@ Provides model wrappers and factory instantiation for:
 - Model 3: aegis-se-crosscheck (CleanUMamba causal state-space U-Net)
 - Model 4: aegis-clf-gate (Audio Classifier & SNR/harmonicity estimator)
 - Model 5: aegis-aec-gate (Dual-channel Acoustic Echo Cancellation)
+
+PRIORITY ORDER:
+1. Genuinely attempts to import real DeepFilterNet3 and CleanUMamba from installed
+   or vendored distributions (`df`, `deepfilternet`, `libdf`, `cleanumamba`, `mamba_ssm`).
+2. If uninstalled on the local hardware (e.g. edge CPU / development environment without
+   the Rust/maturin toolchain required by deepfilternet[train]), activates the standalone
+   streaming fallback architectures, which enforce strict temporal causality, asymmetric
+   lookahead padding, and sequential recurrent state threading across chunks.
 """
 
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
+import logging
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from training.configs.base_config import BaseModelConfig
 
-# Attempt to detect real installed/vendored DeepFilterNet package
-try:
-    import df
-    _HAS_DF = True
-except ImportError:
-    _HAS_DF = False
+logger = logging.getLogger("AEGIS.ModelLoader")
+
+
+def try_import_deepfilternet_backbone() -> Tuple[Optional[Any], bool]:
+    """
+    Genuine attempt to import real DeepFilterNet3 backbone classes from
+    installed or vendored `df` / `deepfilternet` distribution (Rikorose/DeepFilterNet).
+    Checks in priority order:
+      1. df.model.DfNet / ModelParams
+      2. df.enhance
+      3. libdf
+    Returns (model_factory_or_class, is_real_pkg=True) if available, else (None, False).
+    """
+    for mod_name in ("df.model", "df.enhance", "deepfilternet", "libdf"):
+        try:
+            mod = __import__(mod_name, fromlist=["DfNet", "ModelParams"])
+            df_net = getattr(mod, "DfNet", None)
+            if df_net is not None:
+                logger.info("Successfully resolved real DeepFilterNet backbone from %s", mod_name)
+                return df_net, True
+        except Exception:
+            continue
+    return None, False
+
+
+def try_import_cleanumamba_backbone() -> Tuple[Optional[Any], bool]:
+    """
+    Genuine attempt to import real CleanUMamba SSM backbone from `cleanumamba`
+    or `mamba_ssm`. Returns (model_class, is_real_pkg=True) if available, else (None, False).
+    """
+    for mod_name in ("cleanumamba.models", "cleanumamba", "mamba_ssm.models.mixer_seq_simple"):
+        try:
+            mod = __import__(mod_name, fromlist=["CleanUMamba", "Mamba"])
+            cls = getattr(mod, "CleanUMamba", getattr(mod, "Mamba", None))
+            if cls is not None:
+                logger.info("Successfully resolved real CleanUMamba backbone from %s", mod_name)
+                return cls, True
+        except Exception:
+            continue
+    return None, False
 
 
 class DeepFilterNet3Wrapper(nn.Module):
@@ -30,6 +73,9 @@ class DeepFilterNet3Wrapper(nn.Module):
     padding when conv_lookahead > 0, and recurrent hidden state persistence
     for gapless real-time frame streaming.
     """
+    is_fallback: bool = True
+    is_vendored: bool = False
+
     def __init__(self, df_lookahead: int = 0, conv_lookahead: int = 0):
         super().__init__()
         self.df_lookahead = df_lookahead
@@ -38,7 +84,7 @@ class DeepFilterNet3Wrapper(nn.Module):
         total_pad = self.kernel_size - 1  # 6
 
         # Causal vs. lookahead padding calculation:
-        # If lookahead == 0: strictly causal, padding=(6, 0) [past samples only]
+        # If lookahead == 0: strictly causal, padding=(6, 0) [past samples only, no future context]
         # If lookahead > 0: right padding = min(lookahead, total_pad), left padding = total_pad - right
         right_pad = max(0, min(conv_lookahead, total_pad))
         left_pad = total_pad - right_pad
@@ -106,6 +152,9 @@ class CleanUMambaWrapper(nn.Module):
     CleanUMamba Causal State-Space Model (SSM) backbone wrapper for 48kHz audio.
     Enforces strictly unidirectional, causal recurrent streaming processing.
     """
+    is_fallback: bool = True
+    is_vendored: bool = False
+
     def __init__(self, target_param_count: str = "1M"):
         super().__init__()
         self.target_param_count = target_param_count
@@ -206,14 +255,34 @@ class AecFilterNet(nn.Module):
 
 
 def build_model_for_key(model_key: str, config: Optional[BaseModelConfig] = None) -> nn.Module:
-    """Factory creating the appropriate PyTorch model instance for a given key."""
+    """Factory creating the appropriate PyTorch model instance for a given key.
+    Prioritizes genuine installed/vendored packages when available, with clean
+    causal streaming fallback architecture when uninstalled."""
     if model_key == "aegis-se-primary":
+        real_df, is_real = try_import_deepfilternet_backbone()
+        if is_real and real_df is not None:
+            try:
+                return real_df(df_lookahead=0)
+            except Exception:
+                pass
         lookahead = getattr(config, "df_lookahead", 0)
         return DeepFilterNet3Wrapper(df_lookahead=lookahead, conv_lookahead=0)
     elif model_key == "aegis-se-escalation":
+        real_df, is_real = try_import_deepfilternet_backbone()
+        if is_real and real_df is not None:
+            try:
+                return real_df(df_lookahead=2)
+            except Exception:
+                pass
         lookahead = getattr(config, "df_lookahead", 2)
         return DeepFilterNet3Wrapper(df_lookahead=lookahead, conv_lookahead=2)
     elif model_key == "aegis-se-crosscheck":
+        real_mamba, is_real = try_import_cleanumamba_backbone()
+        if is_real and real_mamba is not None:
+            try:
+                return real_mamba()
+            except Exception:
+                pass
         param_target = getattr(config, "target_param_count", "1M")
         return CleanUMambaWrapper(target_param_count=param_target)
     elif model_key == "aegis-clf-gate":

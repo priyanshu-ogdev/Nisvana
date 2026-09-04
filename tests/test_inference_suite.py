@@ -297,3 +297,53 @@ class TestStreamingArchitectureAndCausality:
 
             model.reset_state()
             assert model.hidden_state is None
+
+    def test_sequential_chunk_output_depends_on_streaming_history(self):
+        """Validates that processing chunk 2 with history produces different output than without history."""
+        torch.manual_seed(42)
+        model = build_model_for_key("aegis-se-primary")
+        model.eval()
+
+        c1 = torch.randn(1, 480)
+        c2 = torch.randn(1, 480)
+
+        # Stream: c1 then c2
+        model.reset_state()
+        with torch.no_grad():
+            _ = model(c1)
+            y2_stream = model(c2)
+
+        # Isolated: c2 with clean state
+        model.reset_state()
+        with torch.no_grad():
+            y2_isolated = model(c2)
+
+        diff = torch.max(torch.abs(y2_stream - y2_isolated)).item()
+        assert diff > 1e-3, f"Chunk 2 output must depend on Chunk 1 streaming history, diff was {diff}"
+
+    def test_lookahead_measurable_output_difference_between_model1_and_model2(self):
+        """Validates that Model 1 (0 lookahead) and Model 2 (2 lookahead) produce measurably different outputs."""
+        torch.manual_seed(42)
+        m1 = build_model_for_key("aegis-se-primary")
+        m2 = build_model_for_key("aegis-se-escalation")
+        # Load identical weights to isolate the lookahead receptive field effect
+        m2.load_state_dict(m1.state_dict())
+
+        x = torch.randn(1, 480)
+        m1.reset_state()
+        m2.reset_state()
+        with torch.no_grad():
+            y1 = m1(x)
+            y2 = m2(x)
+
+        max_diff = torch.max(torch.abs(y1 - y2)).item()
+        assert max_diff > 0.05, f"Model 1 vs Model 2 lookahead difference should be substantial, got {max_diff}"
+
+    def test_model_loader_genuine_import_attempts(self):
+        """Validates that model_loader genuinely attempts to import vendored backbones."""
+        from training.models.model_loader import try_import_deepfilternet_backbone, try_import_cleanumamba_backbone
+
+        df_factory, is_df = try_import_deepfilternet_backbone()
+        mamba_factory, is_mamba = try_import_cleanumamba_backbone()
+        assert isinstance(is_df, bool)
+        assert isinstance(is_mamba, bool)

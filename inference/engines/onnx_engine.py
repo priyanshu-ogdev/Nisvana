@@ -16,6 +16,16 @@ import torch
 import torch.nn as nn
 
 
+# Authoritative algorithmic buffering / lookahead delay benchmarks established for AEGIS
+MODEL_ALGORITHMIC_DELAY_MS: Dict[str, float] = {
+    "aegis-se-primary": 0.0,       # DeepFilterNet3 zero-lookahead (strictly causal streaming)
+    "aegis-se-escalation": 40.0,   # DeepFilterNet3 standard 40ms lookahead (severe SNR escalation)
+    "aegis-se-crosscheck": 25.0,   # RT-SEMamba / CleanUMamba 25ms framing window
+    "aegis-clf-gate": 0.0,         # Instantaneous frame gating classifier
+    "aegis-aec-gate": 20.0,        # TaylorBeamformer ~20ms delay buffer
+}
+
+
 def export_to_onnx(
     model: nn.Module,
     output_path: Path,
@@ -80,7 +90,8 @@ def benchmark_edge_latency(
     model: nn.Module,
     sample_rate: int = 48000,
     chunk_ms: float = 10.0,
-    algorithmic_delay_ms: float = 0.0,
+    algorithmic_delay_ms: Optional[float] = None,
+    model_key: Optional[str] = None,
     num_runs: int = 50,
     warmup_runs: int = 10,
     device: Optional[torch.device] = None,
@@ -91,13 +102,17 @@ def benchmark_edge_latency(
         model: Neural speech enhancement or classifier model.
         sample_rate: 48000 Hz.
         chunk_ms: Audio chunk duration (e.g. 10 ms = 480 samples).
-        algorithmic_delay_ms: Known buffering or lookahead delay (e.g. 0.0 ms for primary, 40.0 ms for escalation).
+        algorithmic_delay_ms: Explicit buffering or lookahead delay (e.g. 0.0 ms for primary, 40.0 ms for escalation).
+        model_key: Optional model key to lookup default known algorithmic delay from MODEL_ALGORITHMIC_DELAY_MS.
         num_runs: Number of timing iterations.
         warmup_runs: Number of warm-up iterations.
         device: CPU or CUDA device.
     Returns:
         Dictionary with compute latency, algorithmic delay, total latency, and RTF metrics.
     """
+    if algorithmic_delay_ms is None:
+        algorithmic_delay_ms = MODEL_ALGORITHMIC_DELAY_MS.get(model_key or "", 0.0)
+
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

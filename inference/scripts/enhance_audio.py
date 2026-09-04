@@ -129,12 +129,18 @@ def main():
         clean_ref, _ = load_audio_48k(args.reference_clean, target_sr=48000)
         # Trim to matching length
         min_len = min(len(clean_ref), len(enhanced), len(noisy_audio))
+        
+        from inference.engines.onnx_engine import MODEL_ALGORITHMIC_DELAY_MS
+        algorithmic_delay_ms = MODEL_ALGORITHMIC_DELAY_MS.get(args.model, 0.0)
+        compute_latency_ms = rtf * 10.0
+        total_latency_ms = compute_latency_ms + algorithmic_delay_ms
+        
         sih_res = evaluate_sih_compliance(
             estimate=enhanced[:min_len],
             target_clean=clean_ref[:min_len],
             input_noisy=noisy_audio[:min_len],
             sample_rate=48000,
-            latency_mean_ms=rtf * 10.0,
+            total_latency_ms=total_latency_ms,
             chunk_ms=10.0,
         )
         print("\n" + sih_res.format_markdown_table("OFFICIAL SIH DEFENCE BENCHMARK SCORECARD"))
