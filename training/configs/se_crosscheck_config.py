@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List
 
 from .base_config import BaseModelConfig
+from training.callbacks.gradual_unfreezing import GradualUnfreezeConfig
 from .se_primary_config import CLASS_OVERSAMPLE_FACTORS
 
 
@@ -68,3 +69,10 @@ class SeCrosscheckConfig(BaseModelConfig):
     eval_reference_target_snr_db: float = 15.0
     eval_reference_target_stoi: float = 0.85
     eval_reference_target_pesq: float = 2.5
+
+    # Disabled here deliberately -- see gradual_unfreezing.py's docstring:
+    # this model's pretrained_init may not resolve to a real checkpoint at
+    # the target parameter count, in which case this is effectively a
+    # from-scratch run and a freeze schedule would be actively wrong.
+    # Confirm the actual initialization path before enabling.
+    gradual_unfreeze: GradualUnfreezeConfig = field(default_factory=lambda: GradualUnfreezeConfig(enabled=False))

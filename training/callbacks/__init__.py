@@ -5,6 +5,11 @@ from .worst_class_checkpoint_selector import (
     WorstClassCheckpointSelector,
     DISCLOSED_WEAK_CLASSES,
 )
+from .gradual_unfreezing import (
+    GradualUnfreezeConfig,
+    unfrozen_groups_at_epoch,
+    apply_freeze_schedule,
+)
 
 __all__ = [
     "EmaConfig",
@@ -12,4 +17,7 @@ __all__ = [
     "WorstClassCheckpointConfig",
     "WorstClassCheckpointSelector",
     "DISCLOSED_WEAK_CLASSES",
+    "GradualUnfreezeConfig",
+    "unfrozen_groups_at_epoch",
+    "apply_freeze_schedule",
 ]

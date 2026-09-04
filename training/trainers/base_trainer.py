@@ -32,6 +32,7 @@ class BaseTrainer(ABC):
         self.worst_class_selector: Optional[WorstClassCheckpointSelector] = None
         if hasattr(config, "worst_class_checkpoint") and config.worst_class_checkpoint.enabled:
             self.worst_class_selector = WorstClassCheckpointSelector(config.worst_class_checkpoint)
+        self.gradual_unfreeze_cfg = getattr(config, "gradual_unfreeze", None)
 
         # Device placement & Mixed Precision (AMP)
         try:
@@ -96,6 +97,17 @@ class BaseTrainer(ABC):
         if hasattr(self.config, "ema") and self.config.ema.enabled:
             self.ema_tracker = EmaTracker(model, self.config.ema)
         return self.ema_tracker
+
+    def update_gradual_unfreezing(self, model: Any, epoch: int, layer_group_map: Optional[dict] = None) -> List[str]:
+        """
+        Applies progressive layer unfreezing schedule to model based on current epoch.
+        Returns list of currently unfrozen layer group names.
+        """
+        if self.gradual_unfreeze_cfg and getattr(self.gradual_unfreeze_cfg, "enabled", False):
+            if layer_group_map:
+                from training.callbacks.gradual_unfreezing import apply_freeze_schedule
+                return apply_freeze_schedule(model, self.gradual_unfreeze_cfg, epoch, layer_group_map)
+        return []
 
     @abstractmethod
     def training_step(self, batch) -> dict:

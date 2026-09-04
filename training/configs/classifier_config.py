@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List
 
 from .base_config import BaseModelConfig
+from training.callbacks.gradual_unfreezing import GradualUnfreezeConfig
 from training.callbacks.ema import EmaConfig
 
 
@@ -108,6 +109,11 @@ class ClassifierConfig(BaseModelConfig):
     # small, fast-converging model (25 epochs, patience 6) doesn't get
     # much benefit from smoothing a long noisy trajectory it doesn't have.
     ema: EmaConfig = field(default_factory=lambda: EmaConfig(enabled=False))
+
+    # Also disabled: this model trains from scratch (pretrained_init=None,
+    # already stated above) -- there is no pretrained checkpoint to protect
+    # from catastrophic forgetting, so a freeze schedule has nothing to do.
+    gradual_unfreeze: GradualUnfreezeConfig = field(default_factory=lambda: GradualUnfreezeConfig(enabled=False))
 
     # Integration test, not just a standalone accuracy number: does this
     # classifier's "impulsive/hard" flag actually correlate with where

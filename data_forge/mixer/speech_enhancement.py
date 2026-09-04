@@ -11,10 +11,32 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import numpy as np
 import soundfile as sf
-from data_forge.config import BRANCH_SE, TARGET_SAMPLE_RATE, ForgeMixingConfig
+from data_forge.config import BRANCH_SE, TARGET_SAMPLE_RATE, ForgeMixingConfig, DATASET_PROFILES
 from .engine import SnrMixerEngine
 
 logger = logging.getLogger("DataForge.BranchSE")
+
+
+def resolve_source_dataset(filename: str) -> str:
+    """
+    Recovers the source_dataset key (matching DATASET_PROFILES) from a
+    preprocessed filename of the form '{source_dataset}_{original_stem}.wav'
+    -- this naming convention is set by preprocessor/pipeline.py's
+    `clip_id = f"{source_dataset}_{input_path.stem}"` and is the ONLY
+    reliable way to recover it post-preprocessing, since files are moved
+    into unified_class-named directories that don't preserve the raw
+    source path substrings (e.g. "noisex") that a naive filename/path
+    heuristic would otherwise look for.
+
+    VERIFIED 2026-09-03: several DATASET_PROFILES keys themselves contain
+    underscores (e.g. "gunshot_dryad", "drone_audioset", "vctk_demand"),
+    so a naive filename.split("_")[0] breaks on those. Longest-prefix
+    match against the actual known keys handles this correctly.
+    """
+    candidates = [k for k in DATASET_PROFILES.keys() if filename.startswith(k + "_")]
+    if not candidates:
+        return "unknown"
+    return max(candidates, key=len)
 
 
 class SpeechEnhancementBranch:
@@ -102,11 +124,29 @@ class SpeechEnhancementBranch:
             sf.write(clean_file, res.clean_target, TARGET_SAMPLE_RATE, subtype="PCM_16")
             sf.write(rir_file, res.reverberant_target, TARGET_SAMPLE_RATE, subtype="PCM_16")
 
-            # Infer acoustic class and sync tier from noise source path
+            # Determine acoustic class from the directory it was sorted into
+            # at preprocessing time (dest_dir = processed_dir/unified_class.value --
+            # this part was already correct) and recover the true sync_tier
+            # from DATASET_PROFILES via the source-dataset-prefixed filename,
+            # NOT the previous "noisex" substring heuristic (confirmed wrong:
+            # it silently tagged every non-NOISEX-92 source as Tier 1,
+            # including genuinely band-limited ones, and never consulted the
+            # authoritative DATASET_PROFILES this project already corrected
+            # MAD's tier in).
             noise_class = noise_p.parent.name
             if noise_class in ("processed", "augmented", "audio", "wavs"):
                 noise_class = "general_noise"
-            sync_tier = 3 if "noisex" in noise_p.name.lower() else 1
+
+            source_dataset = resolve_source_dataset(noise_p.name)
+            profile = DATASET_PROFILES.get(source_dataset)
+            sync_tier = profile.default_sync_tier.value if profile is not None else 1
+            if profile is None:
+                logger.warning(
+                    "Could not resolve source_dataset for noise file '%s' -- "
+                    "defaulting sync_tier=1 (native). If this fires frequently, "
+                    "check that preprocessing's clip_id naming convention hasn't changed.",
+                    noise_p.name,
+                )
 
             record = {
                 "clip_id": clip_id,

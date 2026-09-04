@@ -25,6 +25,7 @@ from data_forge.config import SyncTier, UnifiedClass
 # SOTA upgrade pass config imports
 from training.callbacks.ema import EmaConfig
 from training.callbacks.worst_class_checkpoint_selector import WorstClassCheckpointConfig
+from training.callbacks.gradual_unfreezing import GradualUnfreezeConfig
 from training.data.spec_augment import SpecMixConfig
 from training.schedulers.snr_curriculum import SnrCurriculumConfig
 
@@ -142,6 +143,7 @@ class BaseModelConfig:
     spec_mix: SpecMixConfig = field(default_factory=SpecMixConfig)
     snr_curriculum: SnrCurriculumConfig = field(default_factory=SnrCurriculumConfig)
     worst_class_checkpoint: WorstClassCheckpointConfig = field(default_factory=WorstClassCheckpointConfig)
+    gradual_unfreeze: GradualUnfreezeConfig = field(default_factory=GradualUnfreezeConfig)
 
     def checkpoint_name(self, step: int) -> str:
         return f"{self.model_key}-v{self.config_version}-step{step:08d}.pt"
