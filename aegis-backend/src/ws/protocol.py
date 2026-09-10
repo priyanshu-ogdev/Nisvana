@@ -28,14 +28,14 @@ import sys
 class HandshakeInit(BaseModel):
     """Frontend requests a secure link for a given client slot."""
     type: Literal["handshake_init"]
-    clientId: str = Field(..., pattern=r"^person-[12]$")
+    clientId: str = Field(..., description="Target node ID")
     timestamp: int = Field(..., description="Unix ms from frontend clock")
 
 
 class HardwareMute(BaseModel):
     """Mute or unmute a specific audio channel on the hardware."""
     type: Literal["hardware_mute"]
-    clientId: str = Field(..., pattern=r"^person-[12]$")
+    clientId: str = Field(..., description="Target node ID")
     target: Literal["primary_mic", "reference_mic", "throat_mic", "headset_output"]
     state: bool = Field(..., description="True = muted")
 
@@ -43,7 +43,7 @@ class HardwareMute(BaseModel):
 class AncSet(BaseModel):
     """Enable or disable ANC for a client."""
     type: Literal["anc_set"]
-    clientId: str = Field(..., pattern=r"^person-[12]$")
+    clientId: str = Field(..., description="Target node ID")
     enabled: bool
 
 
@@ -114,7 +114,9 @@ class AncState(BaseModel):
 class Telemetry(BaseModel):
     """System performance telemetry, broadcast at 1Hz."""
     type: Literal["telemetry"] = "telemetry"
-    latency_ms: float = Field(..., description="End-to-end pipeline latency ms")
+    latency_ms: float = Field(..., description="Legacy end-to-end latency")
+    inference_ms: Optional[float] = Field(None, description="Time spent in ONNX inference")
+    network_ms: Optional[float] = Field(None, description="Time spent in transport/buffering")
     snr_improvement_db: float = Field(..., description="Estimated SNR delta dB")
     model: str = Field(..., description="Currently active AI model name")
     platform: Literal["pi5"] = "pi5"

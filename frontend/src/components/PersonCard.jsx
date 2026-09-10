@@ -30,7 +30,7 @@ export function PersonCard({ clientId, side }) {
   let statusText, statusColor, dotState;
   
   if (isDormant) {
-      statusText = clientId === 'person-2' ? "REMOTE — AWAITING HANDSHAKE" : "AWAITING HANDSHAKE";
+      statusText = "AWAITING HANDSHAKE";
       statusColor = "text-[var(--text-low)]";
       dotState = "bg-[var(--text-low)] animate-slow-pulse";
   } else if (isHandshaking) {
@@ -45,7 +45,10 @@ export function PersonCard({ clientId, side }) {
 
   if (isSimulated && !isSecure) statusText += " (SIM)";
 
-  const personNum = clientId.split('-')[1];
+  const displayName = clientId.startsWith('person-') 
+      ? `PERSON ${clientId.split('-')[1]}` 
+      : `NODE ${clientId.split('-').pop().toUpperCase().slice(0, 4)}`;
+
   const borderClass = isSecure
     ? 'border-[var(--panel-border-active)] shadow-[0_4px_30px_rgba(0,0,0,0.5),0_0_15px_rgba(95,242,214,0.1)]'
     : 'border-[var(--panel-border)] shadow-[0_4px_30px_rgba(0,0,0,0.5)]';
@@ -73,13 +76,13 @@ export function PersonCard({ clientId, side }) {
   };
 
   // ALSA tooltip content
-  const alsaInputs = hw_status?.alsainputs || [];
-  const alsaOutputs = hw_status?.alsaoutputs || [];
+  const alsaInputs = client.hw?.alsainputs || [];
+  const alsaOutputs = client.hw?.alsaoutputs || [];
 
   return (
       <div 
         className={`absolute top-[40px] w-[260px] pointer-events-auto backdrop-blur-xl bg-[var(--panel)] border ${borderClass} rounded-[14px] p-4 flex flex-col transition-all duration-300`}
-        style={{ [side === 'left' ? 'left' : 'right']: '40px' }}
+        style={side === 'center' ? { left: '50%', transform: 'translateX(-50%)' } : { [side === 'left' ? 'left' : 'right']: '40px' }}
         onClick={() => muteDropdownOpen && setMuteDropdownOpen(false)}
       >
           {/* Header Row */}
@@ -105,7 +108,7 @@ export function PersonCard({ clientId, side }) {
                     </div>
                   )}
                 </div>
-                <div className="text-[var(--text-hi)] font-bold tracking-widest text-xs uppercase">PERSON {personNum}</div>
+                <div className="text-[var(--text-hi)] font-bold tracking-widest text-xs uppercase">{displayName}</div>
              </div>
              <div className="flex items-center space-x-1">
                 {/* F-1: Mute button with long-press dropdown */}

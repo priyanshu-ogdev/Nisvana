@@ -145,15 +145,19 @@ async def main() -> None:
 
     # 1. Hardware detection
     from .hardware.device_detector import DeviceDetector
-    from .ws.server import AegisServer
+    from .ws.client import AegisClient
     from .ws.protocol import HwStatus
     from .orchestrator import Orchestrator
 
-    server = AegisServer(host=args.host, port=args.port)
+    # Read node identity from env (or generate one)
+    node_id = os.getenv("AEGIS_NODE_ID", "pi-demo")
+    hub_url = os.getenv("AEGIS_HUB_URL", "ws://127.0.0.1:8001/node")
+
+    client = AegisClient(hub_url=hub_url, node_id=node_id)
 
     async def on_hw_change(status_dict: dict) -> None:
         hw = HwStatus(**status_dict)
-        server.push_hw_status(hw)
+        client.push_hw_status(hw)
 
     detector = DeviceDetector(on_status_change=on_hw_change)
 
@@ -168,16 +172,16 @@ async def main() -> None:
     with open("config/audio_pipeline.yaml") as f:
         pipeline_cfg = yaml.safe_load(f)
 
-    orchestrator = Orchestrator(server=server, config=pipeline_cfg)
+    orchestrator = Orchestrator(client=client, config=pipeline_cfg)
     orchestrator.load_model()
 
-    # Signal WS ready with green LED
+    # Signal ready with green LED
     _setup_gpio_led(led_pin, "green")
-    logger.info(f"WS server ready on ws://{args.host}:{args.port}/ws")
+    logger.info(f"Connecting node {node_id} to {hub_url}")
 
     # 4. Run all tasks
     await asyncio.gather(
-        server.serve_forever(),
+        client.connect_forever(),
         orchestrator.run_forever(),
         detector.poll_forever(),
     )

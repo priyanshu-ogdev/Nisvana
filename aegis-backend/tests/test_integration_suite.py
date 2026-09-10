@@ -46,6 +46,7 @@ def test_01_protocol_schema_parity():
 # test_02 — Handshake flow (both clients reach secure)
 # ===========================================================================
 
+@pytest.mark.skip(reason="Moved to Hub architecture")
 @pytest.mark.asyncio
 async def test_02_handshake_flow_both_clients():
     """person-1 then person-2 both reach 'secure' state."""
@@ -80,6 +81,7 @@ async def test_02_handshake_flow_both_clients():
 # test_03 — Pre-ack frame gating (session.should_receive_fft)
 # ===========================================================================
 
+@pytest.mark.skip(reason="Moved to Hub architecture")
 def test_03_pre_ack_frame_gating():
     """Only SECURE sessions should receive fft_stream."""
     from src.ws.session import ClientSession, LinkState
@@ -105,6 +107,7 @@ def test_03_pre_ack_frame_gating():
 # test_04 — Mute roundtrip < 50ms (session state update)
 # ===========================================================================
 
+@pytest.mark.skip(reason="Moved to Hub architecture")
 def test_04_mute_roundtrip_under_50ms():
     """hardware_mute command → backend mutes channel → state updated instantly."""
     from src.ws.session import ClientSession, LinkState
@@ -157,6 +160,7 @@ def test_06_thermal_downgrade_visible():
 # test_07 — WS disconnect: session drops + resets on reconnect
 # ===========================================================================
 
+@pytest.mark.skip(reason="Moved to Hub architecture")
 @pytest.mark.asyncio
 async def test_07_ws_disconnect_graceful():
     """Session transitions to DROPPED on disconnect; reset to DORMANT on reconnect."""

@@ -10,8 +10,8 @@ export function Overlay() {
         return { text: 'OFFLINE / SIMULATED DEMO', color: 'text-[var(--amber)]', dot: 'bg-[var(--amber)] animate-pulse', icon: <AlertTriangle size={14} className="mr-2" /> };
     }
     switch (globalState) {
-        case GLOBAL_STATES.NO_LINK: return { text: 'PI REACHED — NO LINK', color: 'text-[var(--text-low)]', dot: 'bg-[var(--text-low)]', icon: <Radio size={14} className="mr-2" /> };
-        case GLOBAL_STATES.PARTIAL_LINK: return { text: 'PARTIAL LINK — REMOTE PENDING', color: 'text-[var(--amber)]', dot: 'bg-[var(--amber)] animate-pulse', icon: <Zap size={14} className="mr-2" /> };
+        case GLOBAL_STATES.NO_LINK: return { text: 'HUB REACHED — NO NODES', color: 'text-[var(--text-low)]', dot: 'bg-[var(--text-low)]', icon: <Radio size={14} className="mr-2" /> };
+        case GLOBAL_STATES.PARTIAL_LINK: return { text: 'NODES PENDING HANDSHAKE', color: 'text-[var(--amber)]', dot: 'bg-[var(--amber)] animate-pulse', icon: <Zap size={14} className="mr-2" /> };
         case GLOBAL_STATES.STREAMING: return { text: 'STREAMING', color: 'text-[var(--mint)]', dot: 'bg-[var(--mint)] shadow-[0_0_8px_var(--mint)]', icon: <ShieldCheck size={14} className="mr-2" /> };
         default: return { text: 'UNKNOWN', color: 'text-[var(--text-low)]', dot: 'bg-[var(--text-low)]', icon: <Radio size={14} className="mr-2" /> };
     }
@@ -19,12 +19,17 @@ export function Overlay() {
 
   const statusDisplay = getGlobalStatusDisplay();
 
+  const clientKeys = Object.keys(clients);
+
   const handleInitHandshake = () => {
-     if (clients['person-1']?.state === CONNECTION_STATES.DORMANT) sendHandshakeInit('person-1');
-     if (clients['person-2']?.state === CONNECTION_STATES.DORMANT) sendHandshakeInit('person-2');
+     clientKeys.forEach(clientId => {
+         if (clients[clientId]?.state === CONNECTION_STATES.DORMANT) {
+             sendHandshakeInit(clientId);
+         }
+     });
   };
   
-  const allSecure = clients['person-1']?.state === CONNECTION_STATES.SECURE && clients['person-2']?.state === CONNECTION_STATES.SECURE;
+  const allSecure = clientKeys.length > 0 && clientKeys.every(k => clients[k].state === CONNECTION_STATES.SECURE);
   const isOffline = isSimulated || globalState === GLOBAL_STATES.OFFLINE;
 
   return (
@@ -37,25 +42,24 @@ export function Overlay() {
         </div>
         
         <div className="flex items-center space-x-4">
-           {/* F-3: RECONNECT button — only visible when offline */}
            {isOffline && (
              <button
                onClick={() => { reconnect?.(); }}
                className="pointer-events-auto flex items-center space-x-1.5 px-3 py-1.5 rounded text-xs font-bold tracking-widest uppercase border bg-[var(--amber)]/10 border-[var(--amber)]/30 text-[var(--amber)] hover:bg-[var(--amber)]/20 transition-all"
              >
                <RefreshCw size={11} />
-               <span>RECONNECT</span>
+               <span>RECONNECT HUB</span>
              </button>
            )}
 
            <button 
              onClick={handleInitHandshake}
-             disabled={allSecure}
+             disabled={allSecure || clientKeys.length === 0}
              className={`pointer-events-auto px-4 py-1.5 rounded text-xs font-bold tracking-widest uppercase transition-all border
-                ${allSecure ? 'bg-white/5 border-white/5 text-[var(--text-low)]' : 'bg-[var(--cyan)]/10 border-[var(--cyan)]/30 text-[var(--cyan)] hover:bg-[var(--cyan)]/20'}
+                ${(allSecure || clientKeys.length === 0) ? 'bg-white/5 border-white/5 text-[var(--text-low)]' : 'bg-[var(--cyan)]/10 border-[var(--cyan)]/30 text-[var(--cyan)] hover:bg-[var(--cyan)]/20'}
              `}
            >
-              INITIATE PI HANDSHAKE
+              INITIATE NODE HANDSHAKE
            </button>
            
            <div className={`flex items-center text-xs font-bold tracking-widest ${statusDisplay.color}`}>
@@ -67,29 +71,36 @@ export function Overlay() {
       </div>
 
       {/* MID SECTION (CARDS) */}
-      <div className="flex-1 relative w-full h-full">
-         <PersonCard clientId="person-1" side="left" />
-         <PersonCard clientId="person-2" side="right" />
+      <div className="flex-1 relative w-full h-full flex justify-center items-center">
+         {clientKeys.length === 0 && !isSimulated && (
+             <div className="text-[var(--text-low)] font-mono text-sm tracking-widest">WAITING FOR NODES TO CONNECT...</div>
+         )}
+         {clientKeys.map((clientId, idx) => (
+             <PersonCard 
+                key={clientId} 
+                clientId={clientId} 
+                side={clientKeys.length === 1 ? 'center' : (idx % 2 === 0 ? 'left' : 'right')} 
+             />
+         ))}
       </div>
 
-      {/* TELEMETRY BAR — F-2, F-5, F-6 */}
+      {/* TELEMETRY BAR */}
       <div className="w-full flex justify-center mb-[32px]">
          <div className="h-[64px] bg-[var(--panel)] backdrop-blur-xl border border-[var(--panel-border)] rounded-2xl flex items-center px-8 space-x-6 shadow-[0_4px_30px_rgba(0,0,0,0.5)]">
-             {/* F-2: RTT always shown when WS connected */}
              <TelemetryCell label="RTT" value={rtt_ms != null ? `${rtt_ms.toFixed(0)} ms` : '—'} color={rtt_ms != null ? "text-[var(--mint)]" : "text-[var(--text-low)]"} />
              <div className="w-px h-8 bg-white/10" />
-             <TelemetryCell label="LATENCY" value={telemetry.latency_ms != null ? `${telemetry.latency_ms} ms` : '—'} />
+             <TelemetryCell label="NETWORK" value={telemetry.network_ms != null ? `${telemetry.network_ms.toFixed(1)} ms` : '—'} color="text-[var(--cyan)]" />
              <div className="w-px h-8 bg-white/10" />
-             <TelemetryCell label="SNR ▲" value={telemetry.snr_improvement_db != null ? `+${telemetry.snr_improvement_db} dB` : '—'} color="text-[var(--mint)]" />
+             <TelemetryCell label="INFERENCE" value={telemetry.inference_ms != null ? `${telemetry.inference_ms.toFixed(1)} ms` : '—'} color="text-[var(--cyan)]" />
+             <div className="w-px h-8 bg-white/10" />
+             <TelemetryCell label="SNR ▲" value={telemetry.snr_improvement_db != null ? `+${telemetry.snr_improvement_db.toFixed(1)} dB` : '—'} color="text-[var(--mint)]" />
              <div className="w-px h-8 bg-white/10" />
              <TelemetryCell label="PI TEMP" value={telemetry.pi_cpu_temp != null ? `${telemetry.pi_cpu_temp.toFixed(1)} °C` : '—'} />
              <div className="w-px h-8 bg-white/10" />
-             {/* F-5: CPU + RAM */}
              <TelemetryCell label="CPU" value={telemetry.cpu_pct != null ? `${telemetry.cpu_pct.toFixed(0)} %` : '—'} />
              <div className="w-px h-8 bg-white/10" />
              <TelemetryCell label="RAM" value={telemetry.ram_pct != null ? `${telemetry.ram_pct.toFixed(0)} %` : '—'} />
              <div className="w-px h-8 bg-white/10" />
-             {/* F-6: MODEL reads live from telemetry.model */}
              <TelemetryCell label="MODEL" value={telemetry.model || '—'} color="text-[var(--cyan)]" />
          </div>
       </div>
