@@ -21,12 +21,15 @@ by HuggingFace `datasets` (`load_dataset("webdataset", data_files=...)`)
 with no further conversion.
 """
 
-import json
-import tarfile
 import io
+import json
+import logging
+import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
+
+logger = logging.getLogger("DataForge.Exporter")
 
 DEFAULT_SAMPLES_PER_SHARD = 2048  # ~1-2GB shards at typical 4s/48kHz clip sizes
 
@@ -202,7 +205,11 @@ def pack_branch_to_shards(
     writer = ShardWriter(output_dir, effective_prefix, samples_per_shard)
 
     packed = 0
-    for key in sample_keys:
+    total_keys = len(sample_keys)
+    logger.info("Packing %d samples into WebDataset shards for '%s'...", total_keys, effective_prefix)
+    for idx, key in enumerate(sample_keys):
+        if idx > 0 and idx % 10000 == 0:
+            logger.info("Progress: %d / %d samples packed into '%s' (%.1f%%)", idx, total_keys, effective_prefix, 100.0 * idx / total_keys)
         group = file_groups(branch_dir / key)
         if not group:
             continue
@@ -220,4 +227,5 @@ def pack_branch_to_shards(
 
     summary = writer.close()
     summary["samples_packed"] = packed
+    logger.info("Completed packing %d samples into %d '%s' shards.", packed, summary.get("total_shards", 0), effective_prefix)
     return summary

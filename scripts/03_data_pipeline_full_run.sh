@@ -88,8 +88,8 @@ ${PY_BIN} -m data_forge augment
 
 # Step 4: Multi-Branch Training Mixing (Models 1-5)
 echo ""
-echo ">>> [STAGE 4/6] Generating multi-branch model training corpora (${NUM_MIXTURES} mixtures)..."
-${PY_BIN} -m data_forge mix --num-mixtures "${NUM_MIXTURES}" --min-snr -5.0 --max-snr 20.0
+echo ">>> [STAGE 4/6] Generating multi-branch model training corpora (${NUM_MIXTURES} mixtures, max classifier: 60000, workers: ${WORKERS})..."
+${PY_BIN} -m data_forge mix --num-mixtures "${NUM_MIXTURES}" --min-snr -5.0 --max-snr 20.0 --workers "${WORKERS}" --max-classifier-samples 60000
 
 # Step 5: WebDataset Shard Export & HuggingFace Dataset Card
 echo ""

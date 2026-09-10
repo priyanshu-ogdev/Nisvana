@@ -158,25 +158,50 @@ def cmd_mix(args):
 
     split_targets = [("train", n_train), ("val", n_val), ("gentest", n_gentest)]
     mixtures = []
-    for sp, count in split_targets:
-        if count <= 0:
-            continue
-        c_pool = clean_by_split[sp]
-        n_pool = noise_by_split[sp]
-        if c_pool and n_pool:
-            m = se_branch.generate_mixtures(
-                clean_files=c_pool,
-                noise_files=n_pool,
-                rir_files=rir_files,
-                num_mixtures=count,
-                split=sp,
-            )
-            mixtures.extend(m)
+
+    # Check if branch_speech_enhancement already has the required number of samples
+    se_manifest = BRANCH_SE / "manifest.json"
+    if se_manifest.exists():
+        try:
+            with open(se_manifest, "r", encoding="utf-8") as mf:
+                saved_data = json.load(mf)
+                saved_samples = saved_data.get("samples", [])
+                by_sp = {}
+                for s in saved_samples:
+                    by_sp.setdefault(s.get("split"), []).append(s)
+                if all(len(by_sp.get(sp, [])) >= count for sp, count in split_targets if count > 0):
+                    print(f">>> Found {len(saved_samples)} existing speech enhancement mixtures in {BRANCH_SE}. Reusing without re-generation.")
+                    mixtures = saved_samples
+        except Exception as e:
+            logger.debug("Existing SE manifest check: %s", e)
+
+    if not mixtures:
+        for sp, count in split_targets:
+            if count <= 0:
+                continue
+            c_pool = clean_by_split[sp]
+            n_pool = noise_by_split[sp]
+            if c_pool and n_pool:
+                m = se_branch.generate_mixtures(
+                    clean_files=c_pool,
+                    noise_files=n_pool,
+                    rir_files=rir_files,
+                    num_mixtures=count,
+                    split=sp,
+                )
+                mixtures.extend(m)
 
     # 2. Branch Classifier (Model 4)
     clf_branch = ClassifierBranch()
     noise_map = {f.name: f.parent.name for f in all_noise}
-    clf_branch.build_dataset_from_mixtures(mixtures, noise_class_map=noise_map)
+    max_clf = getattr(args, "max_classifier_samples", 60000)
+    workers = getattr(args, "workers", 16)
+    clf_branch.build_dataset_from_mixtures(
+        mixtures,
+        noise_class_map=noise_map,
+        max_samples=max_clf,
+        num_workers=workers,
+    )
 
     # 3. Branch AEC (Model 5)
     aec_branch = AecBranch()
@@ -370,6 +395,8 @@ def main():
     p_mix.add_argument("--num-mixtures", type=int, default=100, help="Number of mixtures to generate")
     p_mix.add_argument("--min-snr", type=float, default=-5.0, help="Minimum SNR in dB")
     p_mix.add_argument("--max-snr", type=float, default=20.0, help="Maximum SNR in dB")
+    p_mix.add_argument("--max-classifier-samples", type=int, default=60000, help="Max samples for Model 4 classifier dataset")
+    p_mix.add_argument("--workers", type=int, default=16, help="Worker threads for parallel processing")
 
     # verify
     subparsers.add_parser("verify", help="Run audit and verification report")
