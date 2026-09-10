@@ -16,14 +16,7 @@ scripts/
 ├── 04_export_webdataset_shards.sh  # [Step 4] Standalone WebDataset tar packer & dataset card generator
 ├── 05_clean_data_pipeline.sh       # [Utility] Complete data/ purge and blank slate reset
 ├── 06_run_tests.sh                 # [Testing] Automated 288-test suite verification across all 32 suites
-│
-├── train.sh                        # [MASTER TRAIN] Unified Master ML Training Pipeline Runner (Rev 3)
-├── 07_train_se_primary.sh          # [Train Alias] Model 1: DeepFilterNet3 Base (0ms lookahead, QAT, Distillation)
-├── 08_train_se_escalation.sh       # [Train Alias] Model 2: DeepFilterNet3 Escalation (10ms lookahead delay buffer)
-├── 09_train_se_crosscheck.sh       # [Train Alias] Model 3: CleanUMamba SSM (Distillation Teacher)
-├── 10_train_classifier.sh          # [Train Alias] Model 4: Acoustic Gating Classifier (0.2s windows)
-├── 11_train_aec.sh                 # [Train Alias] Model 5: Gated Acoustic Echo Cancellation (--force)
-├── 12_train_all_models.sh          # [Train Alias] Full sequential training in scientific dependency order
+├── 07_train.sh                     # [MASTER TRAIN] Unified Master ML Training Pipeline Runner (Rev 3)
 │
 ├── 13_evaluate_models.sh           # [Eval] Multi-Model Audio Evaluation Suite (PESQ, STOI, SI-SNR, SSNR)
 ├── 14_run_acceptance_tests.sh      # [Acceptance] Mission-Critical Defence Acceptance Test Suite
@@ -35,7 +28,7 @@ scripts/
 
 ---
 
-## 2. Master Training Script Reference (`train.sh`)
+## 2. Master Training Script Reference (`07_train.sh`)
 
 The master training script connects all model training layers into a single, cohesive, production-grade CLI.
 
@@ -50,19 +43,19 @@ The master training script connects all model training layers into a single, coh
 ### Usage Examples
 ```bash
 # Train complete 5-model ensemble in scientific dependency order:
-./scripts/train.sh --model all
+./scripts/07_train.sh --model all
 
 # Train Model 1 with native Blackwell bfloat16 AMP and QAT from epoch 1:
-./scripts/train.sh --model se_primary --precision bf16 --qat
+./scripts/07_train.sh --model se_primary --precision bf16 --qat
 
 # Train Model 2 with 10ms lookahead output delay:
-./scripts/train.sh --model se_escalation --epochs 80
+./scripts/07_train.sh --model se_escalation --epochs 80
 
 # Train Model 3 (CleanUMamba teacher):
-./scripts/train.sh --model se_crosscheck --epochs 100
+./scripts/07_train.sh --model se_crosscheck --epochs 100
 
 # Quick verification dry run (tests initialization of all 5 architectures):
-./scripts/train.sh --dry-run
+./scripts/07_train.sh --dry-run
 ```
 
 ---

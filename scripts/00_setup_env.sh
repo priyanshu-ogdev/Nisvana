@@ -133,7 +133,7 @@ if ${PY_BIN} -m pip install --no-build-isolation "causal-conv1d>=1.4.0" 2>&1 | t
 else
     echo "  ⚠ Building causal-conv1d from source with nvcc failed or compiler not present."
     echo "    Trying binary distribution fallback..."
-    ${PY_BIN} -m pip install --prefer-binary "causal-conv1d>=1.4.0" || true
+    ${PY_BIN} -m pip install --no-build-isolation --prefer-binary "causal-conv1d>=1.4.0" || true
 fi
 
 # mamba-ssm MUST be installed after causal-conv1d without build isolation
@@ -143,7 +143,7 @@ if ${PY_BIN} -m pip install --no-build-isolation "mamba-ssm>=2.2.0" 2>&1 | tail 
 else
     echo "  ⚠ Building mamba-ssm from source failed (requires CUDA toolkit nvcc compiler)."
     echo "    Trying binary distribution fallback..."
-    ${PY_BIN} -m pip install --prefer-binary "mamba-ssm>=2.2.0" || true
+    ${PY_BIN} -m pip install --no-build-isolation --prefer-binary "mamba-ssm>=2.2.0" || true
 fi
 
 # DeepFilterNet check
@@ -278,5 +278,5 @@ echo ""
 echo "  Next steps:"
 echo "    1. Run: bash scripts/01_data_pipeline_dry_run.sh"
 echo "    2. Run: bash scripts/02_data_pipeline_sample_test.sh"
-echo "    3. Run: bash scripts/train.sh --model all"
+echo "    3. Run: bash scripts/07_train.sh --model all"
 echo "============================================================"

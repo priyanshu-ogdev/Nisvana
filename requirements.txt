@@ -36,7 +36,8 @@ torchvision>=0.19    # not directly used, but common dependency of training util
 # Installs pre-built deepfilterlib and df.* module namespace (df.model, df.enhance, df.io).
 # NOTE: Avoid [train] extra as it pulls in deepfilterdataloader which requires HDF5 C dev libraries
 # and fails to compile; Project AEGIS provides its own native WebDataset / streaming dataloaders.
-deepfilternet>=0.5.6
+# deepfilternet is explicitly removed from here to prevent pip from attempting to build
+# deepfilterdataloader from source on Python 3.13. It is installed by scripts/00_setup_env.sh instead.
 
 # CleanUMamba — the SE crosscheck backbone (Model 3).
 # NOTE: causal-conv1d and mamba-ssm compile CUDA/C++ extensions against your active
