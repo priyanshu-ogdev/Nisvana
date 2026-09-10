@@ -44,9 +44,8 @@ class SnrStateFusion:
         
         # If low_snr_model is missing, we gracefully degrade by forcing weight to 0
         if self._low_snr is None:
-            if target > 0.0:
-                # Log once per transition? To avoid spam, just silently act as 0
-                pass
+            if target > 0.0 and self._current_weight == 0.0:
+                logger.warning(f"Degrading to standard model (weight=0.0) for snr_state={snr_state} due to missing low_snr checkpoint.")
             target = 0.0
             
         if self._current_weight < target:

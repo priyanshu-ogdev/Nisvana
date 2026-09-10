@@ -27,9 +27,18 @@ def main():
     # In a real run, we would iterate the test-set, run the DSP pipeline, and compute metrics.
     # For this gate validation and mock output, we just assert the directory structure and write rows.
     
+    import os
+
+    # E4 instrumentation: Allow forcing a mock failure via env vars
+    force_pesq_fail = os.environ.get("MOCK_PESQ_FAIL", "0") == "1"
+    force_snr_fail = os.environ.get("MOCK_SNR_FAIL", "0") == "1"
+
     # We must ensure the headers and rows meet the exact specification
     rows = []
     classes = ["voice", "siren", "wind", "gunfire", "explosion"]
+    
+    # Track pass/fail across the run
+    gate_failed = False
     
     # Simulated runs to populate the CSV format
     for cls in classes:
@@ -38,16 +47,30 @@ def main():
             pesq_val = 3.2
             stoi_val = 0.91
             snr_abs = -15.0
-            snr_imp = 12.0
+            snr_imp = 16.0
             seg_snr = 8.5
             recov = 0.95
             
-            # Gunfire/explosion rows additionally carry segmental columns
+            # Inject failures if requested
+            if force_pesq_fail and cls == "voice" and snr_bin == "[-5,0]":
+                pesq_val = 2.1  # Below 2.5
+            
+            if force_snr_fail and cls == "gunfire" and snr_bin == "[-5,0]":
+                snr_imp = 12.0  # Below 15.0
+
             if cls in ["gunfire", "explosion"]:
                 row = [cls, snr_bin, pesq_val, stoi_val, snr_abs, snr_imp, seg_snr, recov]
             else:
                 row = [cls, snr_bin, pesq_val, stoi_val, snr_abs, snr_imp, "", ""]
             rows.append(row)
+            
+            # Check gate thresholds for exit codes
+            if pesq_val < 2.5 or stoi_val < 0.85:
+                # Speech-bearing segment fails PESQ/STOI
+                gate_failed = True
+                
+            if snr_imp < 15.0:
+                print(f"SNR-RISK: Class {cls} bin {snr_bin} improvement ({snr_imp}dB) is under 15dB")
 
     # Write report
     with open(args.out, "w", newline="") as f:
@@ -59,7 +82,10 @@ def main():
     print(f"Validation report written to {args.out}")
 
     # Exit code 1 if any speech-bearing segment row fails PESQ<2.5 or STOI<0.85
-    # (Here we just return 0 for the dry run as long as schema matches)
+    if gate_failed:
+        print("GATE FAILED: PESQ < 2.5 or STOI < 0.85")
+        sys.exit(1)
+    
     sys.exit(0)
 
 if __name__ == "__main__":
