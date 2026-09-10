@@ -107,13 +107,13 @@ async def _self_test() -> bool:
     except Exception as e:
         results["limiter_safety"] = f"FAIL: {e}"
 
-    # 5. WS server smoke test (brief)
+    # 5. WS client smoke test (brief)
     try:
-        from .ws.server import AegisServer
-        srv = AegisServer(host="127.0.0.1", port=18999)
-        results["ws_server"] = "PASS (instantiation)"
+        from .ws.client import AegisClient
+        client = AegisClient(hub_url="ws://127.0.0.1:8001/node", node_id="test-node")
+        results["ws_client"] = "PASS (instantiation)"
     except Exception as e:
-        results["ws_server"] = f"FAIL: {e}"
+        results["ws_client"] = f"FAIL: {e}"
 
     # Report
     logger.info("\n=== SELF-TEST RESULTS ===")
