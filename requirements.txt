@@ -1,3 +1,8 @@
+# ==============================================================================
+# Project AEGIS — Python Dependencies
+# Target: DGX Spark GB10 (Grace Blackwell, CUDA 13)
+# ==============================================================================
+
 # Core
 numpy>=1.24
 scipy>=1.10
@@ -12,9 +17,53 @@ pyloudnorm>=0.1.1    # ITU-R BS.1770-4 LUFS normalization (step3_loudness)
 # Fetchers
 kaggle>=1.6          # required for mad.py's real audio download (GitHub only hosts annotations)
 
-# Export / industry-standard training format (optional at build time, required to consume shards)
+# Export / industry-standard training format
 webdataset>=0.2.90
-torch>=2.1           # only needed by data_forge.exporter.torch_dataset consumers, not by the pipeline itself
 
-# Testing
+# ==============================================================================
+# ML Training Stack — DGX Spark GB10 / CUDA 13
+# ==============================================================================
+# PyTorch: install with CUDA 13 index. If CUDA 13 wheels are not yet published
+# under a cu130 tag, use the nightly or the latest cu124/cu126 build that runs
+# under CUDA 13's backward-compatible driver. The DGX Spark's driver supports
+# all CUDA toolkit versions back to 11.8.
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch>=2.4
+torchaudio>=2.4
+torchvision>=0.19    # not directly used, but common dependency of training utils
+
+# DeepFilterNet3 — the actual SE backbone (Models 1 & 2).
+# [train] extra pulls in the Rust/maturin-built training loss and the full
+# df.* module namespace (df.loss.Loss, df.model, df.io) that model_loader.py's
+# vendored-import path and multires_loss.py's prefer_vendored=True path
+# actually consume. Without this, both fall back to the from-scratch wrappers.
+# INSTALL NOTE: requires Rust toolchain (rustup) on the build machine.
+# On DGX Spark Ubuntu: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+deepfilternet[train]>=0.5.6
+
+# CleanUMamba — the SE crosscheck backbone (Model 3).
+# mamba_ssm is the Mamba selective state-space model kernel library.
+# INSTALL NOTE: requires CUDA toolkit headers at build time.
+# On DGX Spark: `apt install nvidia-cuda-toolkit` or use the NGC container.
+mamba-ssm>=2.2.0
+causal-conv1d>=1.4.0  # required dependency of mamba-ssm
+
+# ==============================================================================
+# SIH Compliance Evaluation — REQUIRED for valid metrics
+# ==============================================================================
+# Without these, metrics.py silently falls back to internally-calibrated proxy
+# scores instead of the official STOI and PESQ implementations.
+pystoi>=0.4.1
+pesq>=0.0.4
+
+# ==============================================================================
+# Testing & Development
+# ==============================================================================
 pytest>=8.0
+
+# ONNX export & edge inference
+onnx>=1.16
+onnxruntime-gpu>=1.18   # GPU-accelerated inference; falls back to CPU provider if no GPU
+
+# Profiling & debugging (optional but recommended on DGX)
+tensorboard>=2.17       # training loss/metric visualization
