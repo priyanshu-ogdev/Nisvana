@@ -42,6 +42,59 @@ class TestSharedExplosionFetcher:
         results = fetcher.fetch(sample_mode=True, dry_run=True)
         assert len(results) > 0
 
+    def test_shared_dataframe_unpacking(self, tmp_path):
+        import pickle
+        import pandas as pd
+        import numpy as np
+
+        pkl_path = tmp_path / "SHAReD.pkl"
+        df = pd.DataFrame({
+            "audio": [np.random.randn(4800).astype(np.float32) for _ in range(5)],
+            "sr": [48000] * 5,
+        })
+        with open(pkl_path, "wb") as f:
+            pickle.dump(df, f)
+
+        fetcher = SharedExplosionFetcher(tmp_path)
+        results = fetcher.fetch(sample_mode=False, dry_run=False)
+        wav_files = list((tmp_path / "wavs").glob("*.wav"))
+        assert len(wav_files) == 5
+        assert len(results) == 5
+        assert results[0].success is True
+
+    def test_shared_dict_mapping_unpacking(self, tmp_path):
+        import pickle
+        import numpy as np
+
+        pkl_path = tmp_path / "SHAReD.pkl"
+        data = {
+            "blast_a": np.random.randn(2400).astype(np.float32),
+            "blast_b": {"audio": np.random.randn(2400).astype(np.float32), "sr": 48000},
+        }
+        with open(pkl_path, "wb") as f:
+            pickle.dump(data, f)
+
+        fetcher = SharedExplosionFetcher(tmp_path)
+        results = fetcher.fetch(sample_mode=False, dry_run=False)
+        wav_files = list((tmp_path / "wavs").glob("*.wav"))
+        assert len(wav_files) == 2
+        assert len(results) == 2
+
+    def test_shared_ndarray_unpacking(self, tmp_path):
+        import pickle
+        import numpy as np
+
+        pkl_path = tmp_path / "SHAReD.pkl"
+        data = np.random.randn(3, 3000).astype(np.float32)
+        with open(pkl_path, "wb") as f:
+            pickle.dump(data, f)
+
+        fetcher = SharedExplosionFetcher(tmp_path)
+        results = fetcher.fetch(sample_mode=False, dry_run=False)
+        wav_files = list((tmp_path / "wavs").glob("*.wav"))
+        assert len(wav_files) == 3
+        assert len(results) == 3
+
 
 class TestDroneAudioSetFetcher:
     def test_drone_dry_run(self, tmp_path):
