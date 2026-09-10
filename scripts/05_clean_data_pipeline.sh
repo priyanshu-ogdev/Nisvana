@@ -14,16 +14,30 @@ DATA_DIR="${ROOT_DIR}/data"
 echo "=== PROJECT AEGIS: CLEANING DATA PIPELINE ==="
 echo "Target directory: ${DATA_DIR}"
 
-# Remove all contents of data subdirectories safely
+PURGE_RAW=0
+for arg in "$@"; do
+    if [ "$arg" == "--purge-raw" ] || [ "$arg" == "--all" ]; then
+        PURGE_RAW=1
+    fi
+done
+
+# Remove generated data artifacts safely while protecting raw downloads
 if [ -d "${DATA_DIR}" ]; then
-    echo ">>> Purging existing data artifacts..."
-    rm -rf "${DATA_DIR}/raw"
+    echo ">>> Purging generated pipeline artifacts..."
     rm -rf "${DATA_DIR}/processed"
     rm -rf "${DATA_DIR}/augmented"
     rm -rf "${DATA_DIR}/splits"
     rm -rf "${DATA_DIR}/forge"
     rm -rf "${DATA_DIR}/shards"
     rm -rf "${DATA_DIR}/manifests"
+    
+    if [ "${PURGE_RAW}" -eq 1 ]; then
+        echo ">>> [--purge-raw specified] Purging data/raw download archives..."
+        rm -rf "${DATA_DIR}/raw"
+    else
+        echo ">>> [PROTECTED] Preserving data/raw (manually placed archives & raw downloads intact)."
+        echo ">>> To also purge raw downloads, run: $0 --purge-raw"
+    fi
 fi
 
 echo ">>> Recreating empty directory skeleton for a fresh start..."
