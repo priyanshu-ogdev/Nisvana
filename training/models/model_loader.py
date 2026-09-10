@@ -37,18 +37,39 @@ def try_import_deepfilternet_backbone() -> Tuple[Optional[Any], bool]:
       3. libdf
     Returns (model_factory_or_class, is_real_pkg=True) if available, else (None, False).
     """
-    # Compatibility shim for modern torchaudio (where torchaudio.backend was deprecated/removed)
+    # Compatibility shim for modern torchaudio (where torchaudio.backend and AudioMetaData were removed)
     try:
         import torchaudio
+        from dataclasses import dataclass
+        @dataclass
+        class AudioMetaData:
+            sample_rate: int = 0
+            num_frames: int = 0
+            num_channels: int = 0
+            bits_per_sample: int = 0
+            encoding: str = ""
+
+        if not hasattr(torchaudio, "AudioMetaData"):
+            torchaudio.AudioMetaData = AudioMetaData
+
         if not hasattr(torchaudio, "backend"):
             import sys, types
             backend_mod = types.ModuleType("torchaudio.backend")
             common_mod = types.ModuleType("torchaudio.backend.common")
-            common_mod.AudioMetaData = getattr(torchaudio, "AudioMetaData", None)
+            common_mod.AudioMetaData = AudioMetaData
             backend_mod.common = common_mod
             sys.modules["torchaudio.backend"] = backend_mod
             sys.modules["torchaudio.backend.common"] = common_mod
             setattr(torchaudio, "backend", backend_mod)
+        else:
+            if not hasattr(torchaudio.backend, "common"):
+                import types
+                common_mod = types.ModuleType("torchaudio.backend.common")
+                common_mod.AudioMetaData = AudioMetaData
+                torchaudio.backend.common = common_mod
+                sys.modules["torchaudio.backend.common"] = common_mod
+            elif not hasattr(torchaudio.backend.common, "AudioMetaData"):
+                torchaudio.backend.common.AudioMetaData = AudioMetaData
     except Exception:
         pass
 

@@ -190,8 +190,9 @@ echo "  Installing mamba-ssm (--no-build-isolation)..."
 if ${PY_BIN} -m pip install --no-build-isolation "mamba-ssm>=2.2.0" 2>&1 | tail -5; then
     echo "  ✓ mamba-ssm installed successfully."
 else
-    echo "  ⚠ Building mamba-ssm from source failed. Trying binary distribution fallback..."
-    ${PY_BIN} -m pip install --no-build-isolation --prefer-binary "mamba-ssm>=2.2.0" || true
+    echo "  ⚠ Building mamba-ssm CUDA C++ extension failed on host compiler."
+    echo "    Installing mamba-ssm with Triton backend fallback (MAMBA_SKIP_CUDA_BUILD=TRUE)..."
+    MAMBA_SKIP_CUDA_BUILD=TRUE ${PY_BIN} -m pip install --no-build-isolation "mamba-ssm>=2.2.0" 2>&1 | tail -5 || true
 fi
 
 # DeepFilterNet: install without packaging downgrade conflict, then patch torchaudio.backend
@@ -202,11 +203,11 @@ ${PY_BIN} -m pip install --no-deps "deepfilternet>=0.5.6" 2>&1 | tail -3 || true
 # Ensure packaging>=24.0 for build tools
 ${PY_BIN} -m pip install "packaging>=24.0" 2>&1 | tail -3 || true
 
-# Apply torchaudio backwards compatibility patch for modern torchaudio (2.x / 2.11 / 2.14)
+# Apply torchaudio backwards compatibility patch for modern torchaudio (2.x / 2.9+ / 2.11 / 2.14)
 ${PY_BIN} -c "
-import sys, os, importlib.util
+import sys, os, importlib.util, re
 
-# 1. Provide sitecustomize shim so any process in this Python env has torchaudio.backend
+# 1. Provide sitecustomize shim so any process in this Python env has torchaudio.backend & AudioMetaData
 try:
     import site
     site_pkgs = site.getsitepackages()
@@ -215,14 +216,35 @@ try:
         shim = '''# Project AEGIS torchaudio backwards compatibility shim for DeepFilterNet
 try:
     import sys, types, torchaudio
+    from dataclasses import dataclass
+    @dataclass
+    class AudioMetaData:
+        sample_rate: int = 0
+        num_frames: int = 0
+        num_channels: int = 0
+        bits_per_sample: int = 0
+        encoding: str = \"\"
+
+    if not hasattr(torchaudio, \"AudioMetaData\"):
+        torchaudio.AudioMetaData = AudioMetaData
+
     if not hasattr(torchaudio, \"backend\"):
         backend_mod = types.ModuleType(\"torchaudio.backend\")
         common_mod = types.ModuleType(\"torchaudio.backend.common\")
-        common_mod.AudioMetaData = getattr(torchaudio, \"AudioMetaData\", None)
+        common_mod.AudioMetaData = AudioMetaData
         backend_mod.common = common_mod
         sys.modules[\"torchaudio.backend\"] = backend_mod
         sys.modules[\"torchaudio.backend.common\"] = common_mod
         setattr(torchaudio, \"backend\", backend_mod)
+    else:
+        if not hasattr(torchaudio.backend, \"common\"):
+            common_mod = types.ModuleType(\"torchaudio.backend.common\")
+            common_mod.AudioMetaData = AudioMetaData
+            torchaudio.backend.common = common_mod
+            sys.modules[\"torchaudio.backend.common\"] = common_mod
+        else:
+            if not hasattr(torchaudio.backend.common, \"AudioMetaData\"):
+                torchaudio.backend.common.AudioMetaData = AudioMetaData
 except Exception:
     pass
 '''
@@ -230,14 +252,16 @@ except Exception:
         if os.path.isfile(sc_path):
             with open(sc_path, 'r', encoding='utf-8') as f:
                 existing = f.read()
-        if 'Project AEGIS torchaudio backwards compatibility shim' not in existing:
-            with open(sc_path, 'a', encoding='utf-8') as f:
-                f.write(shim)
-            print('  ✓ Registered torchaudio.backend compatibility shim in sitecustomize.py')
+        if 'Project AEGIS torchaudio backwards compatibility shim' in existing:
+            parts = existing.split('# Project AEGIS torchaudio backwards compatibility shim')
+            existing = parts[0]
+        with open(sc_path, 'w', encoding='utf-8') as f:
+            f.write(existing.strip() + '\n' + shim)
+        print('  ✓ Updated torchaudio.backend & AudioMetaData shim in sitecustomize.py')
 except Exception as e:
     pass
 
-# 2. Patch df/io.py if present
+# 2. Patch df/io.py if present with standalone AudioMetaData dataclass
 try:
     spec = importlib.util.find_spec('df')
     if spec and spec.submodule_search_locations:
@@ -246,13 +270,32 @@ try:
         if os.path.isfile(io_file):
             with open(io_file, 'r', encoding='utf-8') as f:
                 content = f.read()
-            target = 'from torchaudio.backend.common import AudioMetaData'
-            replacement = 'try:\n    from torchaudio.backend.common import AudioMetaData\nexcept (ImportError, ModuleNotFoundError):\n    from torchaudio import AudioMetaData'
-            if target in content:
-                content = content.replace(target, replacement)
+            replacement_code = '''from dataclasses import dataclass
+@dataclass
+class AudioMetaData:
+    sample_rate: int = 0
+    num_frames: int = 0
+    num_channels: int = 0
+    bits_per_sample: int = 0
+    encoding: str = \"\"
+'''
+            # Replace any previous torchaudio AudioMetaData import variants
+            new_content = re.sub(
+                r'try:\s+from torchaudio\.backend\.common import AudioMetaData\s+except [^:]+:\s+from torchaudio import AudioMetaData',
+                replacement_code,
+                content
+            )
+            new_content = re.sub(
+                r'from torchaudio(?:\.backend\.common)? import AudioMetaData',
+                replacement_code,
+                new_content
+            )
+            if new_content != content:
                 with open(io_file, 'w', encoding='utf-8') as f:
-                    f.write(content)
-                print('  ✓ Patched df/io.py with torchaudio modern API compatibility')
+                    f.write(new_content)
+                print('  ✓ Patched df/io.py with standalone AudioMetaData dataclass')
+            else:
+                print('  ✓ df/io.py already patched with standalone AudioMetaData')
 except Exception as e:
     pass
 " 2>&1
