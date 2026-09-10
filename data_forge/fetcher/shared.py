@@ -22,10 +22,17 @@ def _save_waveform(wf: Any, sr: int, out_path: Path) -> bool:
         if arr.size == 0:
             return False
 
+        # Clean NaNs and infinite values
+        arr = np.nan_to_num(arr, nan=0.0, posinf=1.0, neginf=-1.0)
+
         if arr.ndim > 1:
             # Downmix multi-channel to mono
             axis = 0 if arr.shape[0] < arr.shape[1] else 1
             arr = np.mean(arr, axis=axis)
+
+        # Center waveform (remove DC offset)
+        if len(arr) > 0:
+            arr = arr - np.mean(arr)
 
         max_abs = np.max(np.abs(arr))
         if max_abs > 1.0:
@@ -50,9 +57,10 @@ class SharedExplosionFetcher(BaseFetcher):
     DOWNLOAD_URL = f"https://dataverse.harvard.edu/api/access/datafile/{DATAVERSE_FILE_ID}"
 
     def fetch(self, sample_mode: bool = False, dry_run: bool = False) -> List[DownloadResult]:
-        # Check if WAV files were already extracted or manually placed
+        # Check if WAV files were already extracted (expecting >= 300 waveforms for full dataset)
         existing_wavs = list(self.output_dir.glob("**/*.wav"))
-        if existing_wavs and not dry_run:
+        min_expected = 10 if sample_mode else 300
+        if len(existing_wavs) >= min_expected and not dry_run:
             logger.info("Found %d existing SHAReD blast WAV files in %s", len(existing_wavs), self.output_dir)
             return [DownloadResult(success=True, destination=w, bytes_downloaded=w.stat().st_size, elapsed_sec=0.0, md5="") for w in existing_wavs]
 
@@ -96,15 +104,32 @@ class SharedExplosionFetcher(BaseFetcher):
                     import pandas as pd
                     if isinstance(data, pd.DataFrame):
                         logger.info("SHAReD DataFrame shape=%s, columns=%s", data.shape, list(data.columns)[:10])
-                        audio_col = next((col for col in ["audio", "waveform", "waveforms", "signal", "signals", "data", "wav", "x", "recording", "clip"] if col in data.columns), None)
-                        sr_col = next((col for col in ["sample_rate", "samplerate", "sampling_rate", "sr", "fs"] if col in data.columns), None)
+                        # Prioritize microphone_data (exact column in Takazawa et al. Harvard Dataverse)
+                        audio_col = next(
+                            (col for col in data.columns if col in [
+                                "microphone_data", "microphone", "mic_data", "audio",
+                                "waveform", "waveforms", "signal", "signals", "data",
+                                "wav", "x", "recording", "clip"
+                            ] or "microphone_data" in col or "mic_data" in col or
+                            ("microphone" in col and "time" not in col and "rate" not in col)),
+                            None
+                        )
+                        sr_col = next(
+                            (col for col in data.columns if col in [
+                                "microphone_sample_rate_hz", "microphone_sample_rate",
+                                "sample_rate", "samplerate", "sampling_rate", "sr", "fs"
+                            ] or ("sample_rate" in col and "microphone" in col) or
+                            ("sample_rate" in col and "barometer" not in col and "accelerometer" not in col)),
+                            None
+                        )
 
                         if audio_col:
+                            logger.info("Found audio column '%s' and sample-rate column '%s'", audio_col, sr_col)
                             for idx, row in data.iterrows():
                                 if sample_mode and idx >= 10:
                                     break
                                 val = row[audio_col]
-                                sr = row[sr_col] if sr_col else default_sr
+                                sr = row[sr_col] if sr_col and row[sr_col] and not pd.isna(row[sr_col]) else default_sr
                                 if isinstance(val, dict):
                                     wf = val.get("bytes", val.get("array", val.get("data", val.get("audio"))))
                                     sr = val.get("sampling_rate", val.get("sample_rate", sr))
@@ -114,15 +139,15 @@ class SharedExplosionFetcher(BaseFetcher):
                                 if _save_waveform(wf, int(sr), out_p):
                                     count += 1
                         else:
-                            # Matrix of time-series: shape (N_clips, T_samples) or (T_samples, N_clips)
-                            if data.shape[0] < data.shape[1] and data.shape[0] <= 2000:
+                            # Matrix of time-series: only if large number of samples per column/row
+                            if data.shape[0] < data.shape[1] and data.shape[1] > 1000:
                                 for idx in range(data.shape[0]):
                                     if sample_mode and idx >= 10:
                                         break
                                     out_p = extracted_dir / f"shared_blast_{idx:03d}.wav"
                                     if _save_waveform(data.iloc[idx].to_numpy(), default_sr, out_p):
                                         count += 1
-                            elif data.shape[1] <= 2000:
+                            elif data.shape[1] <= 1000 and data.shape[0] > 1000:
                                 for idx, col in enumerate(data.columns):
                                     if sample_mode and idx >= 10:
                                         break

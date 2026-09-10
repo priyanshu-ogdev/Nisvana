@@ -49,8 +49,10 @@ class TestSharedExplosionFetcher:
 
         pkl_path = tmp_path / "SHAReD.pkl"
         df = pd.DataFrame({
-            "audio": [np.random.randn(4800).astype(np.float32) for _ in range(5)],
-            "sr": [48000] * 5,
+            "event_name": [f"event_{i}" for i in range(5)],
+            "source_yield_kg": [10.0] * 5,
+            "microphone_data": [np.random.randn(4800).astype(np.float32) for _ in range(5)],
+            "microphone_sample_rate_hz": [48000] * 5,
         })
         with open(pkl_path, "wb") as f:
             pickle.dump(df, f)
