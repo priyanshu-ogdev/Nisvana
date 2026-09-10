@@ -62,6 +62,16 @@ def _try_import_vendored_df_loss():
     normal state for this integration point, not an error.
     """
     try:
+        import torchaudio
+        if not hasattr(torchaudio, "backend"):
+            import sys, types
+            backend_mod = types.ModuleType("torchaudio.backend")
+            common_mod = types.ModuleType("torchaudio.backend.common")
+            common_mod.AudioMetaData = getattr(torchaudio, "AudioMetaData", None)
+            backend_mod.common = common_mod
+            sys.modules["torchaudio.backend"] = backend_mod
+            sys.modules["torchaudio.backend.common"] = common_mod
+            setattr(torchaudio, "backend", backend_mod)
         from df.loss import Loss as _DfLoss  # real package, if `deepfilternet[train]` is installed
         return _DfLoss
     except Exception:

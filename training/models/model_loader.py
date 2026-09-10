@@ -37,6 +37,21 @@ def try_import_deepfilternet_backbone() -> Tuple[Optional[Any], bool]:
       3. libdf
     Returns (model_factory_or_class, is_real_pkg=True) if available, else (None, False).
     """
+    # Compatibility shim for modern torchaudio (where torchaudio.backend was deprecated/removed)
+    try:
+        import torchaudio
+        if not hasattr(torchaudio, "backend"):
+            import sys, types
+            backend_mod = types.ModuleType("torchaudio.backend")
+            common_mod = types.ModuleType("torchaudio.backend.common")
+            common_mod.AudioMetaData = getattr(torchaudio, "AudioMetaData", None)
+            backend_mod.common = common_mod
+            sys.modules["torchaudio.backend"] = backend_mod
+            sys.modules["torchaudio.backend.common"] = common_mod
+            setattr(torchaudio, "backend", backend_mod)
+    except Exception:
+        pass
+
     for mod_name in ("df.model", "df.enhance", "deepfilternet", "libdf"):
         try:
             mod = __import__(mod_name, fromlist=["DfNet", "ModelParams"])

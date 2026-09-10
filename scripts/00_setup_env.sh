@@ -53,29 +53,56 @@ fi
 PY_VERSION=$(${PY_BIN} --version 2>&1)
 echo "  Target Python: ${PY_VERSION} at ${PY_BIN}"
 
-# Detect if PyTorch with CUDA is already present
+# Detect host GPU and CUDA version via nvidia-smi
+CUDA_MAJOR="13"
+CUDA_VERSION="unknown"
+GPU_NAME="unknown"
+if command -v nvidia-smi &> /dev/null; then
+    CUDA_VERSION=$(nvidia-smi | grep "CUDA Version" | awk '{print $9}' || echo "unknown")
+    GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || echo "unknown")
+    echo "  GPU: ${GPU_NAME}"
+    echo "  CUDA Driver Version: ${CUDA_VERSION}"
+    if [[ "${CUDA_VERSION}" =~ ^([0-9]+) ]]; then
+        CUDA_MAJOR="${BASH_REMATCH[1]}"
+    fi
+else
+    echo "  WARNING: nvidia-smi not found. GPU/CUDA may not be available."
+fi
+
+# Determine target PyTorch CUDA wheel repository
+if [ "${CUDA_MAJOR}" -ge 13 ] 2>/dev/null; then
+    TARGET_PYTORCH_TAG="cu130"
+else
+    TARGET_PYTORCH_TAG="cu126"
+fi
+
+# Detect if PyTorch with matching CUDA architecture is already present
+NEED_TORCH_REINSTALL=false
 HAS_TORCH_CUDA=false
+TORCH_VER="none"
 if ${PY_BIN} -c "import torch" 2>/dev/null; then
     CUDA_AVAIL=$(${PY_BIN} -c "import torch; print(torch.cuda.is_available())" 2>/dev/null || echo "False")
-    TORCH_INFO=$(${PY_BIN} -c "import torch; print(f'v{torch.__version__} | CUDA Available: {torch.cuda.is_available()}')" 2>/dev/null || echo "Unknown")
-    echo "  ✓ Active PyTorch found: ${TORCH_INFO}"
-    if [ "${CUDA_AVAIL}" = "True" ]; then
-        HAS_TORCH_CUDA=true
+    TORCH_VER=$(${PY_BIN} -c "import torch; print(torch.__version__)" 2>/dev/null || echo "unknown")
+    TORCH_CUDA_BUILD=$(${PY_BIN} -c "import torch; print(getattr(torch.version, 'cuda', 'none') or 'none')" 2>/dev/null || echo "none")
+    echo "  ✓ Active PyTorch found: v${TORCH_VER} (CUDA build: ${TORCH_CUDA_BUILD} | CUDA Available: ${CUDA_AVAIL})"
+
+    if [ "${CUDA_AVAIL}" != "True" ]; then
+        echo "  ⚠ PyTorch is CPU-only. Upgrade to CUDA ${TARGET_PYTORCH_TAG} required."
+        NEED_TORCH_REINSTALL=true
+    elif [ "${CUDA_MAJOR}" -ge 13 ] 2>/dev/null && [[ ! "${TORCH_CUDA_BUILD}" =~ ^13 ]]; then
+        echo "  ⚠ CUDA VERSION MISMATCH DETECTED:"
+        echo "    System has CUDA ${CUDA_VERSION} / GPU ${GPU_NAME} (sm_121),"
+        echo "    but active PyTorch was built for CUDA ${TORCH_CUDA_BUILD} (${TORCH_VER})."
+        echo "    This mismatch causes runtime sm_121 kernel incompatibility and nvcc C++ build crashes."
+        echo "    Purging mismatched PyTorch and installing CUDA 13.0 (${TARGET_PYTORCH_TAG}) build..."
+        NEED_TORCH_REINSTALL=true
     else
-        echo "  ⚠ PyTorch is CPU-only. Will be upgraded to CUDA version."
+        echo "  ✓ Active PyTorch CUDA build matches target system (${TARGET_PYTORCH_TAG})."
+        HAS_TORCH_CUDA=true
     fi
 else
     echo "  PyTorch not found in target Python. Will be installed."
-fi
-
-# Check CUDA availability via nvidia-smi
-if command -v nvidia-smi &> /dev/null; then
-    CUDA_VERSION=$(nvidia-smi | grep "CUDA Version" | awk '{print $9}' || echo "unknown")
-    GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1 || echo "unknown")
-    echo "  GPU: ${GPU_NAME}"
-    echo "  CUDA Driver Version: ${CUDA_VERSION}"
-else
-    echo "  WARNING: nvidia-smi not found. GPU/CUDA may not be available."
+    NEED_TORCH_REINSTALL=true
 fi
 
 # Check disk space
@@ -108,28 +135,45 @@ echo ">>> [3/7] Upgrading pip and build tools (ninja, packaging, maturin)..."
 ${PY_BIN} -m pip install --upgrade pip setuptools wheel build ninja packaging maturin 2>&1 | tail -5
 
 # ==============================================================================
-# 4. Core Dependencies & PyTorch Installation
+# 4. Core Dependencies & PyTorch Installation (CUDA 13 / cu130)
 # ==============================================================================
 echo ""
-if [ "${HAS_TORCH_CUDA}" = "false" ]; then
-    echo ">>> [4/7] Installing PyTorch with CUDA support..."
-    ${PY_BIN} -m pip uninstall -y torch torchaudio torchvision 2>/dev/null || true
-    ${PY_BIN} -m pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu126 2>&1 | tail -5
+if [ "${NEED_TORCH_REINSTALL}" = "true" ]; then
+    echo ">>> [4/7] Installing PyTorch with CUDA support (${TARGET_PYTORCH_TAG})..."
+    echo "  Purging mismatched PyTorch, torchaudio, torchvision, C++ extensions, and old CUDA runtime libs..."
+    ${PY_BIN} -m pip uninstall -y torch torchaudio torchvision causal-conv1d mamba-ssm 2>/dev/null || true
+    ${PY_BIN} -m pip uninstall -y nvidia-cublas-cu12 nvidia-cuda-runtime-cu12 nvidia-cudnn-cu12 nvidia-cusolver-cu12 nvidia-cusparse-cu12 nvidia-nccl-cu12 2>/dev/null || true
+
+    echo "  Downloading PyTorch from ${TARGET_PYTORCH_TAG} index..."
+    ${PY_BIN} -m pip install torch torchaudio torchvision \
+        --index-url "https://download.pytorch.org/whl/${TARGET_PYTORCH_TAG}" \
+        --extra-index-url https://download.pytorch.org/whl/cu130 \
+        --extra-index-url https://download.pytorch.org/whl/cu126 \
+        --extra-index-url https://pypi.org/simple 2>&1 | tail -10
 else
-    echo ">>> [4/7] Reusing active CUDA PyTorch installation (${TORCH_INFO})..."
+    echo ">>> [4/7] Reusing active verified CUDA PyTorch installation (v${TORCH_VER} | CUDA ${TARGET_PYTORCH_TAG})..."
 fi
 
 echo "  Installing base requirements from requirements.txt..."
 ${PY_BIN} -m pip install -r "${ROOT_DIR}/requirements.txt" 2>&1 | tail -10
 
 # ==============================================================================
-# 5. Non-Sandboxed Mamba SSM & Causal-Conv1D Installation (--no-build-isolation)
+# 5. Non-Sandboxed Mamba SSM, Causal-Conv1D & DeepFilterNet (--no-build-isolation)
 # ==============================================================================
 echo ""
-echo ">>> [5/7] Installing Mamba SSM and Causal-Conv1D (NO BUILD ISOLATION)..."
+echo ">>> [5/7] Installing Mamba SSM, Causal-Conv1D, and DeepFilterNet..."
 echo "  Note: Compiling directly against active PyTorch (${PY_BIN}) to avoid sandbox isolation."
 
-export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-8.0;8.6;8.9;9.0;10.0;12.0}"
+# Auto-detect target CUDA architecture (e.g. sm_121 for GB10) if not specified
+if [ -n "${TORCH_CUDA_ARCH_LIST:-}" ]; then
+    echo "  Using specified TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}"
+else
+    DETECTED_CC=$(${PY_BIN} -c "import torch; print(f'{torch.cuda.get_device_capability(0)[0]}.{torch.cuda.get_device_capability(0)[1]}' if torch.cuda.is_available() and torch.cuda.device_count() > 0 else '')" 2>/dev/null || true)
+    if [ -n "${DETECTED_CC}" ]; then
+        export TORCH_CUDA_ARCH_LIST="${DETECTED_CC}"
+        echo "  Targeting active GPU CUDA Architecture: sm_${DETECTED_CC//./} (${DETECTED_CC})"
+    fi
+fi
 export MAX_JOBS="${MAX_JOBS:-8}"
 
 # causal-conv1d MUST be installed first without build isolation
@@ -137,8 +181,7 @@ echo "  Installing causal-conv1d (--no-build-isolation)..."
 if ${PY_BIN} -m pip install --no-build-isolation "causal-conv1d>=1.4.0" 2>&1 | tail -5; then
     echo "  ✓ causal-conv1d installed successfully."
 else
-    echo "  ⚠ Building causal-conv1d from source with nvcc failed or compiler not present."
-    echo "    Trying binary distribution fallback..."
+    echo "  ⚠ Building causal-conv1d from source failed. Trying binary distribution fallback..."
     ${PY_BIN} -m pip install --no-build-isolation --prefer-binary "causal-conv1d>=1.4.0" || true
 fi
 
@@ -147,24 +190,84 @@ echo "  Installing mamba-ssm (--no-build-isolation)..."
 if ${PY_BIN} -m pip install --no-build-isolation "mamba-ssm>=2.2.0" 2>&1 | tail -5; then
     echo "  ✓ mamba-ssm installed successfully."
 else
-    echo "  ⚠ Building mamba-ssm from source failed (requires CUDA toolkit nvcc compiler)."
-    echo "    Trying binary distribution fallback..."
+    echo "  ⚠ Building mamba-ssm from source failed. Trying binary distribution fallback..."
     ${PY_BIN} -m pip install --no-build-isolation --prefer-binary "mamba-ssm>=2.2.0" || true
 fi
 
-# DeepFilterNet check
-echo "  Verifying deepfilternet..."
-if ! ${PY_BIN} -c "from df.model import ModelParams" 2>/dev/null; then
-    echo "  Installing deepfilternet (prebuilt runtime)..."
-    ${PY_BIN} -m pip install "deepfilternet>=0.5.6" || {
-        echo "  ⚠ deepfilternet install skipped. Models 1 & 2 will use fallback CleanUMamba/DF wrappers."
-    }
-fi
+# DeepFilterNet: install without packaging downgrade conflict, then patch torchaudio.backend
+echo "  Installing and configuring DeepFilterNet..."
+${PY_BIN} -m pip install "deepfilterlib==0.5.6" appdirs loguru 2>&1 | tail -3 || true
+# Install deepfilternet with --no-deps to prevent it from downgrading packaging to 23.x
+${PY_BIN} -m pip install --no-deps "deepfilternet>=0.5.6" 2>&1 | tail -3 || true
+# Ensure packaging>=24.0 for build tools
+${PY_BIN} -m pip install "packaging>=24.0" 2>&1 | tail -3 || true
+
+# Apply torchaudio backwards compatibility patch for modern torchaudio (2.x / 2.11 / 2.14)
+${PY_BIN} -c "
+import sys, os, importlib.util
+
+# 1. Provide sitecustomize shim so any process in this Python env has torchaudio.backend
+try:
+    import site
+    site_pkgs = site.getsitepackages()
+    if site_pkgs:
+        sc_path = os.path.join(site_pkgs[0], 'sitecustomize.py')
+        shim = '''# Project AEGIS torchaudio backwards compatibility shim for DeepFilterNet
+try:
+    import sys, types, torchaudio
+    if not hasattr(torchaudio, \"backend\"):
+        backend_mod = types.ModuleType(\"torchaudio.backend\")
+        common_mod = types.ModuleType(\"torchaudio.backend.common\")
+        common_mod.AudioMetaData = getattr(torchaudio, \"AudioMetaData\", None)
+        backend_mod.common = common_mod
+        sys.modules[\"torchaudio.backend\"] = backend_mod
+        sys.modules[\"torchaudio.backend.common\"] = common_mod
+        setattr(torchaudio, \"backend\", backend_mod)
+except Exception:
+    pass
+'''
+        existing = ''
+        if os.path.isfile(sc_path):
+            with open(sc_path, 'r', encoding='utf-8') as f:
+                existing = f.read()
+        if 'Project AEGIS torchaudio backwards compatibility shim' not in existing:
+            with open(sc_path, 'a', encoding='utf-8') as f:
+                f.write(shim)
+            print('  ✓ Registered torchaudio.backend compatibility shim in sitecustomize.py')
+except Exception as e:
+    pass
+
+# 2. Patch df/io.py if present
+try:
+    spec = importlib.util.find_spec('df')
+    if spec and spec.submodule_search_locations:
+        df_dir = list(spec.submodule_search_locations)[0]
+        io_file = os.path.join(df_dir, 'io.py')
+        if os.path.isfile(io_file):
+            with open(io_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            target = 'from torchaudio.backend.common import AudioMetaData'
+            replacement = 'try:\n    from torchaudio.backend.common import AudioMetaData\nexcept (ImportError, ModuleNotFoundError):\n    from torchaudio import AudioMetaData'
+            if target in content:
+                content = content.replace(target, replacement)
+                with open(io_file, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                print('  ✓ Patched df/io.py with torchaudio modern API compatibility')
+except Exception as e:
+    pass
+" 2>&1
 
 # Run verification of all critical packages
 echo ""
 echo "  Verifying installed neural stack:"
-${PY_BIN} -c "import torch; print(f'  torch {torch.__version__} | CUDA available: {torch.cuda.is_available()} | Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"CPU\"}')" || echo "  WARNING: torch import failed"
+${PY_BIN} -c "
+import torch
+cuda_ok = torch.cuda.is_available()
+dev = torch.cuda.get_device_name(0) if cuda_ok else 'CPU'
+cc = f'sm_{torch.cuda.get_device_capability(0)[0]}{torch.cuda.get_device_capability(0)[1]}' if cuda_ok else 'N/A'
+cuda_ver = getattr(torch.version, 'cuda', 'none')
+print(f'  torch {torch.__version__} (CUDA {cuda_ver}) | CUDA available: {cuda_ok} | Device: {dev} ({cc})')
+" || echo "  WARNING: torch import failed"
 ${PY_BIN} -c "import torchaudio; print(f'  torchaudio {torchaudio.__version__}')" || echo "  WARNING: torchaudio import failed"
 
 ${PY_BIN} -c "
