@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Project AEGIS — [06] Automated Test Runner
-# Runs the full 151-test suite verifying all subpackages.
+# Runs the full 286-test suite across 32 test files verifying all subpackages.
 # ==============================================================================
 
 set -euo pipefail

@@ -1,297 +1,122 @@
-# Project AEGIS — Linux Data Pipeline Orchestration Scripts
+# Project AEGIS — Linux Orchestration Scripts (Rev 3)
 
-This directory contains POSIX-compliant, hardened Bash scripts (`set -euo pipefail`) designed to orchestrate the Project AEGIS Data-Forge pipeline on Linux environments.
+This directory contains POSIX-compliant, hardened Bash scripts (`set -euo pipefail`) designed to orchestrate the complete Project AEGIS stack on Linux (NVIDIA DGX Spark GB10 / Ubuntu 22.04 / 24.04 LTS).
 
-The scripts are numbered in their recommended chronological order of execution:
+---
+
+## 1. Script Inventory
 
 ```
 scripts/
-├── 00_setup_environment.sh         # [Step 0] Python dependencies & directory tree initialization
-├── 01_data_pipeline_dry_run.sh     # [Step 1] Zero-disk-write endpoint & HTTP probe
-├── 02_data_pipeline_sample_test.sh # [Step 2] End-to-end integration test + auto blank slate reset
+├── 00_setup_environment.sh         # [Step 0] Full hardware, Rust, CUDA 13, and PyTorch environment setup
+├── 01_data_pipeline_dry_run.sh     # [Step 1] Zero-disk-write endpoint & Azure Blob reachability probe
+├── 02_data_pipeline_sample_test.sh # [Step 2] End-to-end integration test with auto-clean blank slate
 ├── 03_data_pipeline_full_run.sh    # [Step 3] Full production multi-worker 4TB pipeline runner
 ├── 04_export_webdataset_shards.sh  # [Step 4] Standalone WebDataset tar packer & dataset card generator
 ├── 05_clean_data_pipeline.sh       # [Utility] Complete data/ purge and blank slate reset
-├── 06_run_tests.sh                 # [Testing] Automated 108-test suite verification
-├── 07_train_se_primary.sh/.ps1     # [Train] Model 1: Primary Real-Time SE (0ms lookahead)
-├── 08_train_se_escalation.sh/.ps1  # [Train] Model 2: Escalation SE (40ms lookahead)
-├── 09_train_se_crosscheck.sh/.ps1  # [Train] Model 3: State-Space SE (CleanUMamba)
-├── 10_train_classifier.sh/.ps1     # [Train] Model 4: Acoustic Environment & Gate Classifier
-├── 11_train_aec.sh/.ps1            # [Train] Model 5: Acoustic Echo Cancellation (--force)
-├── 12_train_all_models.sh/.ps1     # [Train] Sequential Multi-Model Master Orchestrator
-├── 13_evaluate_models.sh/.ps1      # [Eval] Multi-Model Audio Evaluation Suite (PESQ, STOI, SI-SNR, SSNR)
-├── 14_run_acceptance_tests.sh/.ps1 # [Acceptance] Mission-Critical Defence Acceptance Test Suite
-├── 15_export_edge_onnx.sh/.ps1     # [Edge] ONNX Edge Model Exporter & Latency Profiler
-├── 16_enhance_audio.sh/.ps1        # [Inference] Offline Audio File Enhancement Runner
-├── 17_live_stream_prototype.sh/.ps1# [Inference] Real-Time Live Microphone & Headset ANC Prototype
-└── 18_verify_sih_compliance.sh/.ps1# [Audit] Official SIH Defence Benchmark & Compliance Runner
+├── 06_run_tests.sh                 # [Testing] Automated 286-test suite verification across all 32 suites
+│
+├── 07_train.sh                     # [MASTER TRAIN] Unified Master ML Training Pipeline Runner (Rev 3)
+├── train.sh                        # [MASTER TRAIN] Convenience alias for 07_train.sh
+├── 07_train_se_primary.sh          # [Train Alias] Model 1: DeepFilterNet3 Base (0ms lookahead, QAT, Distillation)
+├── 08_train_se_escalation.sh       # [Train Alias] Model 2: DeepFilterNet3 Escalation (10ms lookahead delay buffer)
+├── 09_train_se_crosscheck.sh       # [Train Alias] Model 3: CleanUMamba SSM (Distillation Teacher)
+├── 10_train_classifier.sh          # [Train Alias] Model 4: Acoustic Gating Classifier (0.2s windows)
+├── 11_train_aec.sh                 # [Train Alias] Model 5: Gated Acoustic Echo Cancellation (--force)
+├── 12_train_all_models.sh          # [Train Alias] Full sequential training in scientific dependency order
+│
+├── 13_evaluate_models.sh           # [Eval] Multi-Model Audio Evaluation Suite (PESQ, STOI, SI-SNR, SSNR)
+├── 14_run_acceptance_tests.sh      # [Acceptance] Mission-Critical Defence Acceptance Test Suite
+├── 15_export_edge_onnx.sh          # [Edge] Dual-Platform ONNX / TensorRT Exporter (Platform A / Platform B)
+├── 16_enhance_audio.sh             # [Inference] Offline Audio File Enhancement Runner with Escalation Router
+├── 17_live_stream_prototype.sh     # [Inference] Real-Time Live Microphone & Hybrid ANC Prototype
+└── 18_verify_sih_compliance.sh     # [Audit] Official SIH Defence Benchmark & Compliance Runner
 ```
 
-> **Cross-Platform**: All scripts are provided in dual implementations: hardened Bash (`.sh`) for Linux environments and PowerShell (`.ps1`) for Windows ML workstations.
+---
+
+## 2. Master Training Script Reference (`07_train.sh` / `train.sh`)
+
+The master training script connects all model training layers into a single, cohesive, production-grade CLI.
+
+### Features
+- **Grace Blackwell GB10 Native bfloat16 AMP**: Runs native `torch.autocast('cuda', dtype=torch.bfloat16)` across 128GB unified RAM.
+- **Quantization-Aware Training (QAT)**: Injects fake-quantization observers exclusively into `Conv1d`, `Conv2d`, and `Linear` layers from epoch 1, leaving recurrent modules unquantized.
+- **CleanUMamba Spectrogram Distillation**: Automatically distills long-horizon state representations from frozen Model 3 teacher into DeepFilterNet3 students ($\lambda_{\text{distill}} = 0.3$).
+- **Model 2 Lookahead Output Delay**: Configures streaming 1-chunk (10ms / 480-sample) future context buffer.
+- **Worst-Class Pareto Checkpoint Guard**: Rejects checkpoints if any of the 6 fragile defence classes regress.
+- **SNR Curriculum**: Gradually scales difficulty from $+15\text{ dB}$ down to $-5\text{ dB}$.
+
+### Usage Examples
+```bash
+# Train complete 5-model ensemble in scientific dependency order:
+./scripts/07_train.sh --model all
+
+# Train Model 1 with native Blackwell bfloat16 AMP and QAT from epoch 1:
+./scripts/07_train.sh --model se_primary --precision bf16 --qat
+
+# Train Model 2 with 10ms lookahead output delay:
+./scripts/07_train.sh --model se_escalation --epochs 80
+
+# Train Model 3 (CleanUMamba teacher):
+./scripts/07_train.sh --model se_crosscheck --epochs 100
+
+# Quick verification dry run (tests initialization of all 5 architectures):
+./scripts/07_train.sh --dry-run
+```
 
 ---
 
-## Script Reference
+## 3. Data Pipeline & Verification Scripts
 
 ### `00_setup_environment.sh`
-- **Purpose**: Prepares a fresh server or development machine.
-- **Actions**:
-  - Verifies Python 3.10+ installation.
-  - Upgrades `pip` and installs all dependencies from `requirements.txt`.
-  - Installs PyTorch and `webdataset`.
-  - Initializes the complete `data/` directory hierarchy (raw, processed, augmented, splits, forge, shards).
-  - Checks for optional API tokens (`KAGGLE_USERNAME`/`KEY` and `DRYAD_API_TOKEN`).
-- **Usage**:
-  ```bash
-  bash scripts/00_setup_environment.sh
-  ```
-
----
+- Verifies Python 3, GPU hardware, and CUDA 13 drivers via `nvidia-smi`.
+- Installs the stable Rust toolchain (`rustup`) for `deepfilternet[train]`.
+- Installs PyTorch, torchaudio, and webdataset.
+- Builds and installs `mamba-ssm>=2.2.0` and `causal-conv1d`.
 
 ### `01_data_pipeline_dry_run.sh`
-- **Purpose**: Validates all remote dataset URLs, Azure Blob containers, and format verifiers with **zero data written to disk**.
-- **Actions**:
-  - Sends HTTP `HEAD` (or streamed `GET`) requests to all 10 authoritative sources.
-  - Probes multi-gigabyte DNS-5 training blobs on Azure Storage.
-  - Runs the compliance auditor on metadata and configuration profiles.
-- **Usage**:
-  ```bash
-  bash scripts/01_data_pipeline_dry_run.sh
-  ```
-
----
+- Probes all 10 authoritative datasets via HTTP HEAD/GET range requests without writing multi-GB files.
+- Generates pipeline audit report confirming zero invariant violations.
 
 ### `02_data_pipeline_sample_test.sh`
-- **Purpose**: Executes a fast end-to-end integration test of the entire pipeline and **automatically cleans the `data/` folder afterwards** so you can start the real server pipeline with a 100% blank slate.
-- **Workflow**:
-  1. Calls `05_clean_data_pipeline.sh` to ensure a pristine starting directory.
-  2. Runs fetch (sample mode), 10-step preprocessor, augmentor, mixer (20 mixtures), WebDataset shard exporter, and verifier.
-  3. Verifies that the audit report passes.
-  4. Calls `05_clean_data_pipeline.sh` to purge sample artifacts, leaving the `data/` folder 100% clean.
-- **Options**:
-  - `--keep-data`: Disables post-test cleanup to let you inspect sample audio and manifest outputs.
-  - `--mixtures N`: Number of sample triplets to generate (default: 20).
-- **Usage**:
-  ```bash
-  # Standard test + auto clean slate
-  bash scripts/02_data_pipeline_sample_test.sh
-
-  # Test and retain sample files for manual inspection
-  bash scripts/02_data_pipeline_sample_test.sh --keep-data --mixtures 50
-  ```
-
----
+- Executes a fast end-to-end integration test on sample data.
+- Purges sample artifacts upon completion to leave a 100% blank slate for production training.
 
 ### `03_data_pipeline_full_run.sh`
-- **Purpose**: **Primary production orchestrator for the high-capacity ML machine (4 TB storage)**. Runs the entire multi-source download, 10-step preprocessing, grounded augmentation, multi-branch mixing, WebDataset sharding, and pipeline audit.
-- **Workflow**:
-  1. `data_forge fetch --source all --full-mode`: Downloads complete training sets (including multi-part Azure Blobs for DNS-5 noise & clean speech, Kaggle MAD, Dryad gunshots, SHAReD, NOISEX-92, etc.).
-  2. `data_forge preprocess --max-workers N`: Parallel 10-step standardization to 48kHz, -23 LUFS, mono.
-  3. `data_forge augment`: Grounded WSOLA time-stretch [0.90, 1.10] and gain jitter (zero pitch-shifting).
-  4. `data_forge mix --num-mixtures M`: Synthesizes Model 1-3 SE triplets, Model 4 classifier, and Model 5 AEC samples.
-  5. `data_forge export`: Packs samples into sequential `se-*.tar`, `clf-*.tar`, `aec-*.tar` shards and writes `DATASET_CARD.md`.
-  6. `data_forge verify`: Generates final `pipeline_audit_report.md` and audit JSON.
-- **Options**:
-  - `--workers N`: Number of CPU worker threads for polyphase resampling (default: 16).
-  - `--mixtures M`: Number of speech enhancement triplets to generate (default: 200,000).
-  - `--commercial-strict`: Excludes CC-BY-NC non-commercial datasets.
-- **Usage**:
-  ```bash
-  # Full production run (recommend inside tmux)
-  bash scripts/03_data_pipeline_full_run.sh --workers 16 --mixtures 200000
-  ```
-
----
-
-### `04_export_webdataset_shards.sh`
-- **Purpose**: Standalone tool to pack existing `data/forge/` branches into WebDataset `.tar` shards without re-running preprocessing or mixing.
-- **Actions**:
-  - Organizes samples into ~2048 samples/shard.
-  - Computes shard checksums and writes Croissant/HuggingFace-compliant `DATASET_CARD.md`.
-- **Usage**:
-  ```bash
-  bash scripts/04_export_webdataset_shards.sh
-  ```
-
----
+- Primary production orchestrator for downloading, 10-step DSP preprocessing, multi-branch mixing, and WebDataset sharding across 4TB storage.
 
 ### `05_clean_data_pipeline.sh`
-- **Purpose**: Completely purges all raw, processed, augmented, forged, and sharded files from `data/`, restoring an empty directory skeleton.
-- **Safety**: Recreates all required subdirectories and adds empty `.gitkeep` markers so git tracking remains clean.
-- **Usage**:
-  ```bash
-  bash scripts/05_clean_data_pipeline.sh
-  ```
-
----
+- Safely resets `data/` subdirectories (`raw`, `processed`, `augmented`, `splits`, `forge`, `shards`, `manifests`) while restoring the directory skeleton.
 
 ### `06_run_tests.sh`
-- **Purpose**: Executes the complete 108-test unit and integration test suite across all subpackages using `pytest`.
-- **Usage**:
-  ```bash
-  bash scripts/06_run_tests.sh
-  ```
+- Runs the comprehensive 286-test automated pytest suite across all 32 test suites.
 
 ---
 
-### `07_train_se_primary.sh` / `.ps1`
-- **Purpose**: Trains **Model 1 (`aegis-se-primary`)**, the low-latency streaming speech enhancement engine.
-- **Specs**: DeepFilterNet3 architecture, 0 ms lookahead, multi-res spectral + local SNR loss, SpecMix augmentation, EMA shadow weights.
-- **Usage**:
-  ```bash
-  bash scripts/07_train_se_primary.sh [--resume PATH]
-  # PowerShell: .\scripts\07_train_se_primary.ps1
-  ```
+## 4. Edge Deployment & Inference Scripts
 
----
+### `15_export_edge_onnx.sh`
+Exports PyTorch checkpoints to optimized edge runtimes:
+```bash
+# Platform A (Raspberry Pi / CPU INT8 quantization)
+./scripts/15_export_edge_onnx.sh --model se_primary --platform platform_a --quantize
 
-### `08_train_se_escalation.sh` / `.ps1`
-- **Purpose**: Trains **Model 2 (`aegis-se-escalation`)**, the high-capacity semi-causal speech enhancement model.
-- **Specs**: DeepFilterNet3 architecture, 40 ms lookahead (`df_lookahead=2`, `conv_lookahead=2`), emphasis on negative SNR segments, dual-metric worst-class checkpoint selector.
-- **Usage**:
-  ```bash
-  bash scripts/08_train_se_escalation.sh [--resume PATH]
-  # PowerShell: .\scripts\08_train_se_escalation.ps1
-  ```
+# Platform B (GPU Laptop / Jetson AGX Orin TensorRT FP16)
+./scripts/15_export_edge_onnx.sh --model se_primary --platform platform_b --fp16
+```
 
----
+### `16_enhance_audio.sh`
+Offline audio enhancement with dynamic escalation routing:
+```bash
+./scripts/16_enhance_audio.sh --input noisy_cockpit.wav --output clean_cockpit.wav --router
+```
 
-### `09_train_se_crosscheck.sh` / `.ps1`
-- **Purpose**: Trains **Model 3 (`aegis-se-crosscheck`)**, the CleanUMamba state-space U-Net model.
-- **Specs**: Native 48kHz training on AEGIS shards, linear $\mathcal{O}(L)$ state-space representation, serves as architectural cross-validation and GPU fallback.
-- **Usage**:
-  ```bash
-  bash scripts/09_train_se_crosscheck.sh [--resume PATH]
-  # PowerShell: .\scripts\09_train_se_crosscheck.ps1
-  ```
+### `17_live_stream_prototype.sh`
+Real-time microphone streaming with Hybrid Active Noise Cancellation (dual-buffered NLMS filter):
+```bash
+./scripts/17_live_stream_prototype.sh --engine onnx --provider cuda --anc-enable
+```
 
----
-
-### `10_train_classifier.sh` / `.ps1`
-- **Purpose**: Trains **Model 4 (`aegis-clf-gate`)**, the acoustic environment and escalation classifier.
-- **Specs**: 3-way taxonomy (`harmonic`, `impulsive`, `speech_dominant`), class-weighted cross-entropy, validates escalation boundary against Model 1/2 gap.
-- **Usage**:
-  ```bash
-  bash scripts/10_train_classifier.sh [--resume PATH]
-  # PowerShell: .\scripts\10_train_classifier.ps1
-  ```
-
----
-
-### `11_train_aec.sh` / `.ps1`
-- **Purpose**: Fine-tunes **Model 5 (`aegis-aec-gate`)**, the acoustic echo cancellation model.
-- **Safety**: Requires `--force` argument because production deployment defaults to the proven `deepvqe-ggml` checkpoint.
-- **Usage**:
-  ```bash
-  bash scripts/11_train_aec.sh --force
-  # PowerShell: .\scripts\11_train_aec.ps1 -force
-  ```
-
----
-
-### `12_train_all_models.sh` / `.ps1`
-- **Purpose**: **Master Training Orchestrator**. Sequentially trains Model 1, Model 2, Model 3, and Model 4, logging checkpoints into `data/checkpoints/`.
-- **Usage**:
-  ```bash
-  bash scripts/12_train_all_models.sh
-  # PowerShell: .\scripts\12_train_all_models.ps1
-  ```
-
----
-
-### `13_evaluate_models.sh` / `.ps1`
-- **Purpose**: **Multi-Model Audio Evaluation Suite**. Runs comprehensive objective metrics across validation (`val`) or generalization (`gentest`) splits:
-  - **Speech Enhancement**: PESQ (Wideband MOS [1.0, 4.5]), STOI ([0.0, 1.0]), SI-SNR (dB), Segmental SNR (dB), DNSMOS P.835 (SIG, BAK, OVRL).
-  - **Environment Classifier**: 3-Way Categorical Accuracy, Macro-F1, per-class sensitivity (`harmonic`, `impulsive`, `speech_dominant`).
-  - **AEC**: Echo Return Loss Enhancement (ERLE dB).
-- **Per-Class Breakdown**: Evaluates fragile classes (`wind`, `rotor_vehicle_drone`, `tank_tracked`, `artillery_howitzer`) individually.
-- **Reporting**: Logs a structured Markdown table to stdout and writes JSON reports to `data/eval_reports/`.
-- **Usage**:
-  ```bash
-  # Evaluate Model 1 on validation split (50 samples)
-  bash scripts/13_evaluate_models.sh --model aegis-se-primary --num-samples 50 --split val
-  # PowerShell: .\scripts\13_evaluate_models.ps1 --model aegis-se-primary --num-samples 50 --split val
-
----
-
-### `14_run_acceptance_tests.sh` / `.ps1`
-- **Purpose**: **Mission-Critical Defence Acceptance Test Suite**. Runs strict verification against all operational specifications:
-  - **Threshold Criteria**: Validates `PESQ > 2.5 MOS`, `STOI > 0.85 Intelligibility`, `SNR > 15.0 dB`.
-  - **Defence Disturbances**: Validates handling of impulsive gunshots & artillery, periodic drone UAV & helicopter rotors, low-frequency armored tank rumble, sirens, and turbulent wind.
-  - **Hybrid AI + ANC Pipeline**: Validates end-to-end integration of deep enhancement with the Normalized LMS adaptive filter.
-  - **Edge Hardware Readiness**: Validates ONNX exportability and frame latency profiling.
-- **Usage**:
-  ```bash
-  bash scripts/14_run_acceptance_tests.sh
-  # PowerShell: .\scripts\14_run_acceptance_tests.ps1
-  ```
-
----
-
-### `15_export_edge_onnx.sh` / `.ps1`
-- **Purpose**: **Edge Model Exporter & Latency Profiler**. Exports models to standard ONNX format with dynamic batch and time dimensions for embedded deployment (e.g. NVIDIA Jetson AGX Orin, edge SoCs, DSPs).
-- **Actions**:
-  - Exports PyTorch model to `data/onnx_models/<model_key>.onnx`.
-  - Benchmarks execution latency across 10ms, 20ms, or 40ms frame chunks and calculates Real-Time Factor (RTF).
-- **Usage**:
-  ```bash
-  # Export Model 1 for real-time edge streaming
-  bash scripts/15_export_edge_onnx.sh --model aegis-se-primary --chunk-ms 20.0
----
-
-### `16_enhance_audio.sh` / `.ps1`
-- **Purpose**: **Offline Audio File Enhancement Runner**. Processes noisy audio files (WAV, FLAC, MP3) through any trained model, the Hybrid AI + NLMS adaptive filter, or the Dynamic Acoustic Escalation Router.
-- **Actions**:
-  - Automatically loads and resamples audio to standard 48,000 Hz.
-  - Applies 50% Overlap-Add (OLA) streaming reconstruction with Hanning synthesis.
-  - Estimates input vs output DNSMOS (ITU-T P.835) quality improvement.
-- **Usage**:
-  ```bash
-  # Enhance noisy recording with Model 1
-  bash scripts/16_enhance_audio.sh -i noisy.wav -o clean.wav --model aegis-se-primary
-
-  # Enhance with Hybrid AI + NLMS Adaptive Filter
-  bash scripts/16_enhance_audio.sh -i noisy.wav -o clean.wav --use-hybrid-anc
-
-  # PowerShell:
-  .\scripts\16_enhance_audio.ps1 -i noisy.wav -o clean.wav --use-hybrid-anc
-  ```
-
----
-
-### `17_live_stream_prototype.sh` / `.ps1`
-- **Purpose**: **Real-Time Live Microphone & Headset ANC Prototype**. Paced demonstration running the end-to-end tactical headset pipeline:
-  - 48,000 Hz streaming chunks (10 ms frame pacing).
-  - Dynamic acoustic classification (Model 4) and escalation routing (Model 1 / Model 2).
-  - Continuous Normalized LMS residual noise cancellation.
-  - Displays real-time frame processing latencies and Real-Time Factor (RTF).
-- **Usage**:
-  ```bash
-  # Run 5-second live streaming prototype demo
-  bash scripts/17_live_stream_prototype.sh --duration 5.0 --chunk-ms 10.0
-
-  # PowerShell:
-  .\scripts\17_live_stream_prototype.ps1 -duration 5.0 -chunk-ms 10.0
-  ```
-
----
-
-### `18_verify_sih_compliance.sh` / `.ps1`
-- **Purpose**: **Official SIH Defence Benchmark & Compliance Audit Runner**. Executes end-to-end verification against the exact problem statement criteria:
-  - Validates **$\text{SNR} > 15.0\text{ dB}$** (or $\Delta\text{SNR} \ge 15.0\text{ dB}$).
-  - Validates **$\text{STOI} > 0.85$** Intelligibility.
-  - Validates **$\text{PESQ} > 2.50\text{ MOS}$** Voice Quality.
-  - Validates **$\text{RTF} < 1.0$** Real-Time Latency constraint.
-  - Validates noise attenuation across all 7 defence disturbances: Gunshots, Artillery, Helicopter Rotors, Drone UAVs, Armored Tanks, Sirens, and Turbulent Wind.
-  - Validates Dual-Microphone (Primary + Reference) adaptive filtering and dynamic escalation routing.
-- **Usage**:
-  ```bash
-  bash scripts/18_verify_sih_compliance.sh
-  # PowerShell:
-  .\scripts\18_verify_sih_compliance.ps1
-  ```
-
-
-
-
-
+### `18_verify_sih_compliance.sh`
+Runs the official SIH defence benchmark suite verifying SNR $>15\text{ dB}$, STOI $>0.85$, and PESQ $>2.5$.

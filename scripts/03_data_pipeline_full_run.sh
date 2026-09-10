@@ -16,6 +16,7 @@ PY_BIN="$(command -v python3 || command -v python)"
 
 # Default configurations
 WORKERS="${WORKERS:-16}"
+FETCH_WORKERS="${FETCH_WORKERS:-4}"
 NUM_MIXTURES="${NUM_MIXTURES:-200000}"
 COMMERCIAL_STRICT="${COMMERCIAL_STRICT:-0}"
 
@@ -24,6 +25,10 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --workers)
             WORKERS="$2"
+            shift 2
+            ;;
+        --fetch-workers)
+            FETCH_WORKERS="$2"
             shift 2
             ;;
         --mixtures)
@@ -36,7 +41,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: $0 [--workers N] [--mixtures M] [--commercial-strict]"
+            echo "Usage: $0 [--workers N] [--fetch-workers K] [--mixtures M] [--commercial-strict]"
             exit 1
             ;;
     esac
@@ -59,8 +64,8 @@ bash "${SCRIPT_DIR}/00_setup_environment.sh"
 
 # Step 1: Multi-Source Download in Full Mode
 echo ""
-echo ">>> [STAGE 1/6] Downloading verified raw datasets in FULL PRODUCTION MODE..."
-${PY_BIN} -m data_forge fetch --source all --full-mode
+echo ">>> [STAGE 1/6] Downloading verified raw datasets in FULL PRODUCTION MODE (fetch workers: ${FETCH_WORKERS})..."
+${PY_BIN} -m data_forge fetch --source all --full-mode --max-workers "${FETCH_WORKERS}"
 
 # Step 2: 10-Step Sequential Preprocessing Pipeline
 echo ""
