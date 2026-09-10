@@ -83,6 +83,7 @@ class Orchestrator:
 
         self._alsa = None
         self._running = False
+        self._last_infer_ms = 0.0
 
     async def _on_thermal_tier_change(self, model_name: str, tier: str) -> None:
         """Called when thermal guard triggers a model swap."""
@@ -128,7 +129,11 @@ class Orchestrator:
 
     def _run_inference_sync(self, frame: np.ndarray, snr_state: str) -> np.ndarray:
         if self._fusion:
-            return self._fusion.process_frame(frame, snr_state)
+            try:
+                return self._fusion.process_frame(frame, snr_state)
+            except Exception as e:
+                logger.error(f"Inference error, passing through frame: {e}")
+                return frame
         return frame
 
     async def _dsp_loop(self) -> None:
@@ -169,6 +174,7 @@ class Orchestrator:
                 self._executor, self._run_inference_sync, after_harmonic, vad_result["snr_state"]
             )
             infer_ms = (time.monotonic() - t_infer_start) * 1000
+            self._last_infer_ms = 0.8 * self._last_infer_ms + 0.2 * infer_ms
 
             # 4.5. AEC
             after_aec = self._aec.process_frame(enhanced, raw_reference, vad_result["vad_speech"])
@@ -212,15 +218,15 @@ class Orchestrator:
                 tel = self._telemetry.collect(self._model_name)
                 tel["aec_active"] = self._aec.is_active
                 
-                # Split latency: we know infer_ms, so network_ms is whatever's left or just reported directly
-                # To fully fulfill P2, we should probably add inference_ms and network_ms fields directly to the schema
+                # Split latency: report measured inference time and network/buffering time
+                tel["inference_ms"] = round(self._last_infer_ms, 2)
+                tel["network_ms"] = round(max(0.0, tel["latency_ms"] - tel["inference_ms"]), 2)
+                
                 if self._fusion:
                     tel["snr_state"] = self._fusion.snr_state
                     tel["blend_weight"] = self._fusion.blend_weight
                 
                 tel_msg = Telemetry(**tel)
-                # We will duck-type inject inference_ms before sending since schema might not have it yet
-                # Let's add it to tel_msg dict
                 self._client.push_telemetry(tel_msg)
 
             # Sleep

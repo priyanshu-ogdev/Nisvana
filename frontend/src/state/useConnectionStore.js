@@ -117,17 +117,21 @@ export const useConnectionStore = create((set, get) => ({
   _processBinaryMessage: (buffer) => {
       // P1: Binary framing format:
       // <BB + len(node_id_bytes)s + Q + 64B + 64B
+      if (!buffer || buffer.byteLength < 2) return;
       const view = new DataView(buffer);
       const frame_type = view.getUint8(0);
       if (frame_type === 1) {
           const id_len = view.getUint8(1);
+          if (buffer.byteLength < 2 + id_len + 8 + 128) return;
           const decoder = new TextDecoder('utf-8');
           const id_bytes = new Uint8Array(buffer, 2, id_len);
           const node_id = decoder.decode(id_bytes);
           
-          let offset = 2 + id_len + 8; // skip timestamp for now
+          let offset = 2 + id_len + 8; // skip timestamp
           
-          if (!fftStreams[node_id]) return;
+          if (!fftStreams[node_id]) {
+              fftStreams[node_id] = { enhanced: new Uint8Array(64), raw: new Uint8Array(64) };
+          }
           
           const raw = new Uint8Array(buffer, offset, 64);
           const enhanced = new Uint8Array(buffer, offset + 64, 64);
@@ -144,19 +148,21 @@ export const useConnectionStore = create((set, get) => ({
     
     if (msg.type === 'node_online') {
         const nodeId = msg.node_id;
-        fftStreams[nodeId] = { enhanced: new Uint8Array(64), raw: new Uint8Array(64) };
+        if (!fftStreams[nodeId]) {
+            fftStreams[nodeId] = { enhanced: new Uint8Array(64), raw: new Uint8Array(64) };
+        }
         set(state => ({
             clients: {
                 ...state.clients,
                 [nodeId]: { 
-                   state: CONNECTION_STATES.SECURE, // automatically secure for now 
+                   state: msg.secure ? CONNECTION_STATES.SECURE : CONNECTION_STATES.DORMANT,
                    muted: {}, 
                    hw: msg.hw || {},
                    anc: { active: false, vad: false, out: null, in: null, sidetone: false } 
                 }
             }
         }));
-        get()._evalGlobalState(true); // Treat as streaming if secure
+        get()._evalGlobalState(msg.secure);
     }
     else if (msg.type === 'node_offline') {
         const nodeId = msg.node_id;
@@ -169,19 +175,23 @@ export const useConnectionStore = create((set, get) => ({
         get()._evalGlobalState();
     }
     else if (msg.type === 'pong') {
-       const rtt = Date.now() - msg.timestamp;
-       set({ rtt_ms: rtt });
+       const pingTs = msg.timestamp || msg.ts;
+       const rtt = pingTs ? (Date.now() - pingTs) : (typeof msg.rtt_ms === 'number' ? msg.rtt_ms : null);
+       if (typeof rtt === 'number' && !isNaN(rtt)) {
+          set({ rtt_ms: Math.max(0, rtt) });
+       }
     }
     else if (msg.type === 'handshake_ack') {
+       const clientId = msg.clientId || msg.node_id;
        window._aegisShockwave = { x: 0, y: 0, strength: 15.0 };
        set(state => {
           const newClients = { ...state.clients };
-          if(newClients[msg.clientId]) {
-             newClients[msg.clientId].state = CONNECTION_STATES.SECURE;
+          if(newClients[clientId]) {
+             newClients[clientId].state = CONNECTION_STATES.SECURE;
           }
           return { clients: newClients };
        });
-       get()._evalGlobalState();
+       get()._evalGlobalState(true);
     }
     else if (msg.type === 'anc_state') {
        const clientId = msg.clientId || msg.node_id;
@@ -201,10 +211,14 @@ export const useConnectionStore = create((set, get) => ({
        }
     }
     else if (msg.type === 'telemetry') {
+       const currentRtt = get().rtt_ms;
+       const netMs = (typeof msg.network_ms === 'number')
+          ? msg.network_ms
+          : (currentRtt != null ? currentRtt / 2 : null);
        set({ telemetry: {
           latency_ms: msg.latency_ms,
-          inference_ms: msg.inference_ms,
-          network_ms: get().rtt_ms ? (get().rtt_ms / 2) : msg.network_ms,
+          inference_ms: msg.inference_ms ?? null,
+          network_ms: netMs,
           snr_improvement_db: msg.snr_improvement_db,
           model: msg.model,
           pi_cpu_temp: msg.pi_cpu_temp ?? null,
@@ -256,9 +270,13 @@ export const useConnectionStore = create((set, get) => ({
         ws.send(JSON.stringify({ type: 'handshake_init', clientId, timestamp: Date.now() }));
      } else if (isSimulated) {
         setTimeout(() => {
-           get()._processMessage({ type: 'node_online', node_id: clientId, hw: { mic_primary: true } });
-           get()._processMessage({ type: 'link_status', state: 'streaming' });
-        }, 1500);
+           get()._processMessage({ type: 'handshake_ack', clientId, status: 'ok' });
+           const clients = get().clients;
+           const allSecure = Object.values(clients).every(c => c.state === CONNECTION_STATES.SECURE);
+           if (allSecure) {
+               get()._processMessage({ type: 'link_status', state: 'streaming' });
+           }
+        }, 1200);
      }
   },
 
@@ -278,19 +296,80 @@ export const useConnectionStore = create((set, get) => ({
 
      if (ws && ws.readyState === WebSocket.OPEN) {
         // Targeted control message relayed by Hub
-        ws.send(JSON.stringify({ type: 'hardware_mute', node_id: clientId, target, state: muteState }));
+        ws.send(JSON.stringify({ type: 'hardware_mute', node_id: clientId, clientId, target, state: muteState }));
      }
   },
 
   sendAncSet: (clientId, enabled) => {
      const { ws } = get();
+     set(store => {
+         const newClients = { ...store.clients };
+         if (newClients[clientId]) {
+             const prevAnc = newClients[clientId]?.anc || {};
+             newClients[clientId] = {
+               ...newClients[clientId],
+               anc: { ...prevAnc, active: enabled },
+             };
+         }
+         return { clients: newClients };
+     });
      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'anc_set', node_id: clientId, enabled }));
+        ws.send(JSON.stringify({ type: 'anc_set', node_id: clientId, clientId, enabled }));
      }
   },
 
   _startSimulation: () => {
-    set({ isSimulated: true, globalState: GLOBAL_STATES.OFFLINE });
+    fftStreams['person-1'] = { enhanced: new Uint8Array(64), raw: new Uint8Array(64) };
+    fftStreams['person-2'] = { enhanced: new Uint8Array(64), raw: new Uint8Array(64) };
+
+    let t = 0;
+    const simInterval = setInterval(() => {
+       t += 0.05;
+       ['person-1', 'person-2'].forEach((id, pIdx) => {
+          if (!fftStreams[id]) return;
+          const isSec = get().clients[id]?.state === CONNECTION_STATES.SECURE;
+          for (let i = 0; i < 64; i++) {
+             if (isSec) {
+                const wave = Math.sin(t * 2 + i * 0.2 + pIdx) * 0.5 + 0.5;
+                const noise = Math.random() * 0.15;
+                fftStreams[id].raw[i] = Math.floor((wave * 0.8 + noise) * 200);
+                fftStreams[id].enhanced[i] = Math.floor((wave * 0.95 + noise * 0.2) * 240);
+             } else {
+                fftStreams[id].raw[i] = 0;
+                fftStreams[id].enhanced[i] = 0;
+             }
+          }
+       });
+    }, 33);
+
+    set({ 
+      isSimulated: true, 
+      globalState: GLOBAL_STATES.OFFLINE,
+      telemetry: {
+         latency_ms: 8.4,
+         inference_ms: 6.2,
+         network_ms: 2.2,
+         snr_improvement_db: 14.8,
+         model: 'DeepFilterNet3',
+         pi_cpu_temp: 48.2,
+         cpu_pct: 32,
+         ram_pct: 28,
+      },
+      clients: {
+        'person-1': { 
+          state: CONNECTION_STATES.DORMANT, 
+          muted: {}, 
+          hw: { alsainputs: ['Primary Mic (Simulated)'], alsaoutputs: ['Headset DAC (Simulated)'] },
+          anc: { active: false, vad: false, out: 34.0, in: 18.0, sidetone: false } 
+        },
+        'person-2': { 
+          state: CONNECTION_STATES.DORMANT, 
+          muted: {}, 
+          hw: { alsainputs: ['Reference Mic (Simulated)'], alsaoutputs: ['Headset DAC (Simulated)'] },
+          anc: { active: false, vad: false, out: 30.0, in: 15.0, sidetone: false } 
+        }
+      }
+    });
   }
 }));
 

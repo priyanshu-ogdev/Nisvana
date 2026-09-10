@@ -10,7 +10,7 @@ const MUTE_TARGETS = [
   { key: 'headset_output',  label: 'Headset Output' },
 ];
 
-export function PersonCard({ clientId, side }) {
+export function PersonCard({ clientId, index = 0, totalCount = 1, side }) {
   const { clients, sendHardwareMute, sendAncSet, isSimulated, hw_status } = useConnectionStore();
   const client = clients[clientId];
   
@@ -47,7 +47,7 @@ export function PersonCard({ clientId, side }) {
 
   const displayName = clientId.startsWith('person-') 
       ? `PERSON ${clientId.split('-')[1]}` 
-      : `NODE ${clientId.split('-').pop().toUpperCase().slice(0, 4)}`;
+      : clientId.toUpperCase().replace(/^NODE[-_]?/, 'NODE ');
 
   const borderClass = isSecure
     ? 'border-[var(--panel-border-active)] shadow-[0_4px_30px_rgba(0,0,0,0.5),0_0_15px_rgba(95,242,214,0.1)]'
@@ -79,10 +79,22 @@ export function PersonCard({ clientId, side }) {
   const alsaInputs = client.hw?.alsainputs || [];
   const alsaOutputs = client.hw?.alsaoutputs || [];
 
+  const getCardStyle = () => {
+    if (side === 'center' || totalCount === 1) {
+      return { left: '50%', transform: 'translateX(-50%)' };
+    }
+    if (side === 'left') return { left: '40px' };
+    if (side === 'right') return { right: '40px' };
+    const isLeft = index % 2 === 0;
+    const colIndex = Math.floor(index / 2);
+    const offsetPx = 40 + colIndex * 280;
+    return isLeft ? { left: `${offsetPx}px` } : { right: `${offsetPx}px` };
+  };
+
   return (
       <div 
         className={`absolute top-[40px] w-[260px] pointer-events-auto backdrop-blur-xl bg-[var(--panel)] border ${borderClass} rounded-[14px] p-4 flex flex-col transition-all duration-300`}
-        style={side === 'center' ? { left: '50%', transform: 'translateX(-50%)' } : { [side === 'left' ? 'left' : 'right']: '40px' }}
+        style={getCardStyle()}
         onClick={() => muteDropdownOpen && setMuteDropdownOpen(false)}
       >
           {/* Header Row */}

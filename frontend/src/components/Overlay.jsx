@@ -79,7 +79,8 @@ export function Overlay() {
              <PersonCard 
                 key={clientId} 
                 clientId={clientId} 
-                side={clientKeys.length === 1 ? 'center' : (idx % 2 === 0 ? 'left' : 'right')} 
+                index={idx}
+                totalCount={clientKeys.length}
              />
          ))}
       </div>

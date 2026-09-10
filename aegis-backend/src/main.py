@@ -20,9 +20,11 @@ import sys
 import argparse
 import time
 
-from dotenv import load_dotenv
-
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 logging.basicConfig(
     level=logging.INFO,
@@ -160,6 +162,8 @@ async def main() -> None:
         client.push_hw_status(hw)
 
     detector = DeviceDetector(on_status_change=on_hw_change)
+    initial_hw = detector._detect()
+    client.push_hw_status(HwStatus(**initial_hw))
 
     # 2. Load AI model
     from .ai.model_loader import ModelLoader

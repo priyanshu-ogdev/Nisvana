@@ -8,9 +8,35 @@
       "type": "string"
     },
     "latency_ms": {
-      "description": "End-to-end pipeline latency ms",
+      "description": "Legacy end-to-end latency",
       "title": "Latency Ms",
       "type": "number"
+    },
+    "inference_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Time spent in ONNX inference",
+      "title": "Inference Ms"
+    },
+    "network_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Time spent in transport/buffering",
+      "title": "Network Ms"
     },
     "snr_improvement_db": {
       "description": "Estimated SNR delta dB",

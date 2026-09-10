@@ -28,15 +28,24 @@ class NodeRegistry:
         self.nodes[node_id] = {
             "node_id": node_id,
             "hw": hw_info,
-            "connected_at": time.time()
+            "connected_at": time.time(),
+            "secure": False
         }
         self.node_sockets[node_id] = ws
         logger.info(f"Node registered: {node_id}")
 
-    def remove_node(self, node_id: str):
+    def set_secure(self, node_id: str, secure: bool = True):
+        if node_id in self.nodes:
+            self.nodes[node_id]["secure"] = secure
+
+    def remove_node(self, node_id: str, ws: ServerConnection | None = None) -> bool:
+        if ws is not None and self.node_sockets.get(node_id) != ws:
+            logger.info(f"Ignoring stale disconnect for replaced node: {node_id}")
+            return False
         self.nodes.pop(node_id, None)
         self.node_sockets.pop(node_id, None)
         logger.info(f"Node removed: {node_id}")
+        return True
 
 
 class AegisHub:
@@ -51,17 +60,16 @@ class AegisHub:
         if not self.dashboards:
             return
         
-        # P1: Concurrent fan-out
-        coros = []
-        for ws in self.dashboards:
-            coros.append(self._send_safe(ws, msg))
+        # P1: Concurrent fan-out (copy set to avoid mutation during iteration)
+        coros = [self._send_safe(ws, msg) for ws in list(self.dashboards)]
         await asyncio.gather(*coros)
 
     async def _send_safe(self, ws: ServerConnection, msg: str | bytes):
         try:
             await ws.send(msg)
         except Exception:
-            pass # Socket likely closed
+            # Prune closed/errored dashboard socket
+            self.dashboards.discard(ws)
 
     async def handle_dashboard(self, ws: ServerConnection):
         """Dashboard client connection."""
@@ -74,6 +82,7 @@ class AegisHub:
                     "type": "node_online",
                     "node_id": node_id,
                     "hw": info["hw"],
+                    "secure": info.get("secure", False),
                     "ts": int(time.time() * 1000)
                 }
                 await ws.send(json.dumps(msg))
@@ -83,13 +92,23 @@ class AegisHub:
                 if isinstance(message, str):
                     try:
                         data = json.loads(message)
-                        target_id = data.get("node_id") or data.get("clientId") # back-compat for a moment
+                        target_id = data.get("node_id") or data.get("clientId") # back-compat
                         if target_id and target_id in self.registry.node_sockets:
                             # Forward the control message verbatim to the target node
-                            await self.registry.node_sockets[target_id].send(message)
+                            try:
+                                await self.registry.node_sockets[target_id].send(message)
+                            except Exception as e:
+                                logger.warning(f"Failed to forward message to node {target_id}: {e}")
                         elif data.get("type") == "ping":
-                            # Respond to ping immediately (for RTT)
-                            await ws.send(json.dumps({"type": "pong", "seq": data.get("seq"), "rtt_ms": 0, "ts": int(time.time()*1000)}))
+                            # Respond to ping echoing original timestamp for frontend RTT calculation
+                            pong = {
+                                "type": "pong",
+                                "seq": data.get("seq"),
+                                "timestamp": data.get("timestamp"),
+                                "rtt_ms": 0,
+                                "ts": int(time.time() * 1000)
+                            }
+                            await ws.send(json.dumps(pong))
                     except json.JSONDecodeError:
                         pass
         except websockets.exceptions.ConnectionClosed:
@@ -123,6 +142,7 @@ class AegisHub:
                                 "type": "node_online",
                                 "node_id": node_id,
                                 "hw": data.get("hw", {}),
+                                "secure": False,
                                 "ts": int(time.time() * 1000)
                             }))
                             
@@ -130,11 +150,19 @@ class AegisHub:
                             await ws.send(json.dumps({"type": "node_ack", "status": "ok"}))
                         
                         elif msg_type == "ping":
-                            await ws.send(json.dumps({"type": "pong", "seq": data.get("seq"), "rtt_ms": 0, "ts": int(time.time()*1000)}))
+                            pong = {
+                                "type": "pong",
+                                "seq": data.get("seq"),
+                                "timestamp": data.get("timestamp"),
+                                "rtt_ms": 0,
+                                "ts": int(time.time() * 1000)
+                            }
+                            await ws.send(json.dumps(pong))
                             
                         elif node_id:
-                            # Forward all other JSON (telemetry, anc_state) to dashboards
-                            # We blindly forward, P1 rule: skip schema validation on hub hot-path
+                            if msg_type == "handshake_ack":
+                                self.registry.set_secure(node_id, True)
+                            # Forward all other JSON (telemetry, anc_state, handshake_ack) to dashboards
                             await self.broadcast_to_dashboards(message)
 
                     except json.JSONDecodeError:
@@ -149,18 +177,20 @@ class AegisHub:
             pass
         finally:
             if node_id:
-                self.registry.remove_node(node_id)
-                await self.broadcast_to_dashboards(json.dumps({
-                    "type": "node_offline",
-                    "node_id": node_id,
-                    "ts": int(time.time() * 1000)
-                }))
+                removed = self.registry.remove_node(node_id, ws)
+                if removed:
+                    await self.broadcast_to_dashboards(json.dumps({
+                        "type": "node_offline",
+                        "node_id": node_id,
+                        "ts": int(time.time() * 1000)
+                    }))
 
     async def handler(self, ws: ServerConnection):
-        path = ws.request.path
-        if path == "/dashboard":
+        # Normalize path: strip query parameters and trailing slashes
+        clean_path = ws.request.path.split("?")[0].rstrip("/")
+        if clean_path == "/dashboard":
             await self.handle_dashboard(ws)
-        elif path == "/node":
+        elif clean_path == "/node":
             await self.handle_node(ws)
         else:
             await ws.close(1002, "Invalid path. Use /dashboard or /node")

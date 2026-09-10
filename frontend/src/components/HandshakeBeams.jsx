@@ -74,8 +74,15 @@ function BeamLine({ start, end, control, isSecure, isHandshaking }) {
 export function HandshakeBeams() {
    const { clients } = useConnectionStore();
    
-   const p1State = clients['person-1']?.state;
-   const p2State = clients['person-2']?.state;
+   const clientKeys = Object.keys(clients);
+   const node1 = clients[clientKeys[0]];
+   const node2 = clients[clientKeys[1]];
+
+   const p1Secure = node1?.state === CONNECTION_STATES.SECURE;
+   const p1Handshaking = node1?.state === CONNECTION_STATES.HANDSHAKING;
+
+   const p2Secure = node2?.state === CONNECTION_STATES.SECURE;
+   const p2Handshaking = node2?.state === CONNECTION_STATES.HANDSHAKING;
 
    return (
        <group>
@@ -83,15 +90,15 @@ export function HandshakeBeams() {
             start={[0,0,0]} 
             end={[-4.5, 2.0, 0]} 
             control={[-2, 1, 0]} 
-            isSecure={p1State === CONNECTION_STATES.SECURE} 
-            isHandshaking={p1State === CONNECTION_STATES.HANDSHAKING}
+            isSecure={p1Secure} 
+            isHandshaking={p1Handshaking}
           />
           <BeamLine 
             start={[0,0,0]} 
             end={[4.5, 2.0, 0]} 
             control={[2, 1, 0]} 
-            isSecure={p2State === CONNECTION_STATES.SECURE} 
-            isHandshaking={p2State === CONNECTION_STATES.HANDSHAKING}
+            isSecure={p2Secure} 
+            isHandshaking={p2Handshaking}
           />
        </group>
    );

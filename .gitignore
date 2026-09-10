@@ -72,3 +72,4 @@ aegis-backend/models/*
 aegis-backend/__pycache__/
 aegis-backend/**/__pycache__/
 aegis-backend/.pytest_cache/
+aegis-backend/frontend_schemas/

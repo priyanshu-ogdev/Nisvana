@@ -7,7 +7,7 @@
       "type": "string"
     },
     "clientId": {
-      "pattern": "^person-[12]$",
+      "description": "Target node ID",
       "title": "Clientid",
       "type": "string"
     },

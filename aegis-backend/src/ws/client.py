@@ -16,7 +16,8 @@ import websockets
 from websockets.exceptions import ConnectionClosed
 
 from .protocol import (
-    HwStatus, Telemetry, AncState, HardwareMute, AncSet, Ping
+    HwStatus, Telemetry, AncState, HardwareMute, AncSet, Ping,
+    HandshakeAck, LinkStatus, Pong
 )
 
 logger = logging.getLogger(__name__)
@@ -30,11 +31,19 @@ class AegisClient:
         self._send_queue: asyncio.Queue = asyncio.Queue(maxsize=2048)
         self._hw_status: Optional[HwStatus] = None
         self.connected = False
+        self.is_secure = False
         self.reconnect_delay = 1.0
 
         # Mutable state updated by incoming control messages
         self.anc_active = False
         self.muted = {"primary_mic": False, "reference_mic": False, "throat_mic": False, "headset_output": False}
+
+    def _clear_send_queue(self) -> None:
+        while not self._send_queue.empty():
+            try:
+                self._send_queue.get_nowait()
+            except (asyncio.QueueEmpty, ValueError):
+                break
 
     async def connect_forever(self) -> None:
         """Main connection loop with exponential backoff."""
@@ -68,9 +77,13 @@ class AegisClient:
                         task.cancel()
 
             except (ConnectionClosed, OSError, asyncio.TimeoutError) as e:
+                logger.warning(f"Connection lost/failed: {e}. Retrying in {self.reconnect_delay}s...")
+            except Exception as e:
+                logger.error(f"Unexpected WS client error: {e}. Retrying in {self.reconnect_delay}s...")
+            finally:
                 self.connected = False
                 self.ws = None
-                logger.warning(f"Connection lost/failed: {e}. Retrying in {self.reconnect_delay}s...")
+                self._clear_send_queue()
                 await asyncio.sleep(self.reconnect_delay)
                 self.reconnect_delay = min(self.reconnect_delay * 1.5, 10.0)
 
@@ -83,7 +96,14 @@ class AegisClient:
                 try:
                     data = json.loads(message)
                     msg_type = data.get("type")
-                    if msg_type == "hardware_mute":
+                    if msg_type == "handshake_init":
+                        self.is_secure = True
+                        logger.info(f"Handshake accepted for node: {self.node_id}")
+                        ack = HandshakeAck(clientId=self.node_id, status="ok")
+                        self.enqueue(ack.model_dump_json())
+                        link = LinkStatus(clientId=self.node_id, state="streaming")
+                        self.enqueue(link.model_dump_json())
+                    elif msg_type == "hardware_mute":
                         target = data.get("target")
                         state = data.get("state")
                         if target in self.muted:
@@ -92,6 +112,15 @@ class AegisClient:
                     elif msg_type == "anc_set":
                         self.anc_active = data.get("enabled", False)
                         logger.info(f"ANC set: {self.anc_active}")
+                    elif msg_type == "ping":
+                        pong_payload = {
+                            "type": "pong",
+                            "seq": data.get("seq", 0),
+                            "timestamp": data.get("timestamp"),
+                            "rtt_ms": 0.0,
+                            "ts": int(time.time() * 1000)
+                        }
+                        self.enqueue(json.dumps(pong_payload))
                 except json.JSONDecodeError:
                     pass
 
@@ -105,7 +134,7 @@ class AegisClient:
             return
         try:
             self._send_queue.put_nowait(msg)
-        except asyncio.QueueFull:
+        except (asyncio.QueueFull, RuntimeError):
             pass
 
     async def _drain_send_queue(self) -> None:

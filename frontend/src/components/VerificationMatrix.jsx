@@ -49,8 +49,16 @@ export function VerificationMatrix() {
          <div className="font-bold border-b border-[var(--cyan)]/30 pb-2 mb-2">NODE VERIFICATION MATRIX</div>
          <div className="grid grid-cols-2 gap-2">
             <div>Global State:</div><div className="text-right">{globalState}</div>
-            <div>Person 1 State:</div><div className="text-right">{clients['person-1']?.state || 'N/A'}</div>
-            <div>Person 2 State:</div><div className="text-right">{clients['person-2']?.state || 'N/A'}</div>
+            {Object.entries(clients).length > 0 ? (
+               Object.entries(clients).map(([id, c]) => (
+                  <div key={id} className="contents">
+                     <div className="truncate">{id.toUpperCase()} State:</div>
+                     <div className="text-right">{c?.state || 'N/A'}</div>
+                  </div>
+               ))
+            ) : (
+               <><div>Active Nodes:</div><div className="text-right">0 connected</div></>
+            )}
             <div>WebGL Contexts:</div><div className="text-right">{ctxCount} (Target: 1)</div>
             <div>Current FPS:</div><div className="text-right">{fps}</div>
             <div>Audio Pipeline:</div><div className="text-right">Bypass / WS Direct</div>
