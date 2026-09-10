@@ -33,13 +33,10 @@ torchaudio>=2.4
 torchvision>=0.19    # not directly used, but common dependency of training utils
 
 # DeepFilterNet3 — the actual SE backbone (Models 1 & 2).
-# [train] extra pulls in the Rust/maturin-built training loss and the full
-# df.* module namespace (df.loss.Loss, df.model, df.io) that model_loader.py's
-# vendored-import path and multires_loss.py's prefer_vendored=True path
-# actually consume. Without this, both fall back to the from-scratch wrappers.
-# INSTALL NOTE: requires Rust toolchain (rustup) on the build machine.
-# On DGX Spark Ubuntu: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
-deepfilternet[train]>=0.5.6
+# Installs pre-built deepfilterlib and df.* module namespace (df.model, df.enhance, df.io).
+# NOTE: Avoid [train] extra as it pulls in deepfilterdataloader which requires HDF5 C dev libraries
+# and fails to compile; Project AEGIS provides its own native WebDataset / streaming dataloaders.
+deepfilternet>=0.5.6
 
 # CleanUMamba — the SE crosscheck backbone (Model 3).
 # NOTE: causal-conv1d and mamba-ssm compile CUDA/C++ extensions against your active
@@ -48,7 +45,7 @@ deepfilternet[train]>=0.5.6
 #   ModuleNotFoundError: No module named 'torch'
 # Install without pip sandboxing via:
 #   pip install --no-build-isolation -r requirements-mamba.txt
-# Or run scripts/00_setup_environment.sh which handles this automatically.
+# Or run scripts/00_setup_env.sh which handles this automatically.
 
 # ==============================================================================
 # SIH Compliance Evaluation — REQUIRED for valid metrics

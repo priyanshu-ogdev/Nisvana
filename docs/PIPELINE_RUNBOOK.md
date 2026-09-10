@@ -35,7 +35,7 @@ chmod +x scripts/*.sh
 
 ### Step 3: Run Environment Initialization
 ```bash
-bash scripts/00_setup_environment.sh
+bash scripts/00_setup_env.sh
 ```
 This installs Python dependencies, creates the complete `data/` directory hierarchy, and checks API token availability.
 
@@ -54,8 +54,10 @@ cp .env.example .env
 ```dotenv
 # Kaggle API: Required for full Military Audio Dataset (MAD, 8,075 clips, ~1.1 GB)
 # Obtain token from https://www.kaggle.com/settings -> API -> Create New Token
-KAGGLE_USERNAME=your_kaggle_username
-KAGGLE_KEY=your_kaggle_api_key
+KAGGLE_ACCESS_TOKEN=KGAT_your_kaggle_access_token
+# Or legacy credentials:
+# KAGGLE_USERNAME=your_kaggle_username
+# KAGGLE_KEY=your_kaggle_api_key
 
 # Data Dryad Bearer Token: For downloading ballistic gunshot acoustic measurements
 DRYAD_API_TOKEN=your_dryad_bearer_token

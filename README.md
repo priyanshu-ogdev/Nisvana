@@ -87,8 +87,8 @@ Project AEGIS is organized into 9 primary directories, each maintained with an a
 | **`inference/`** | [inference/README.md](file:///d:/Nisvana/inference/README.md) | Edge runtime: `engines` (Dual-platform ONNX/TensorRT export, INT8 quantization), `runtime` (escalation router, speech floor, hysteresis, 30s lazy unload, hybrid ANC), `utils` (lock-free ring buffer, transmission prep) |
 | **`backend/`** | [backend/README.md](file:///d:/Nisvana/backend/README.md) | Multi-user tactical backend: `session_manager.py` (<50 KB/user), `batch_inference.py` (batched tensors over shared weights), `transport.py` (async queues, PCM-16 serialization) |
 | **`docs/`** | [docs/README.md](file:///d:/Nisvana/docs/README.md) | Specifications & research: Master PRD v19 (`Nisvana_PRD.md`), architecture blueprint (`ARCHITECTURE.md`), training runbook, 20+ peer-reviewed bibliography citations |
-| **`scripts/`** | [scripts/README.md](file:///d:/Nisvana/scripts/README.md) | Turnkey orchestration: DGX Spark GB10 setup (`00_setup_environment.sh`), dry-run probes, full pipeline runners, test launchers |
-| **`tests/`** | [tests/README.md](file:///d:/Nisvana/tests/README.md) | Automated QA: 32 test suites, 286 unit & integration tests, DSP compliance checks, SIH acceptance |
+| **`scripts/`** | [scripts/README.md](file:///d:/Nisvana/scripts/README.md) | Turnkey orchestration: DGX Spark GB10 setup (`00_setup_env.sh`), dry-run probes, full pipeline runners, master trainer (`train.sh`), test launchers |
+| **`tests/`** | [tests/README.md](file:///d:/Nisvana/tests/README.md) | Automated QA: 32 test suites, 288 unit & integration tests, DSP compliance checks, SIH acceptance |
 
 ---
 
@@ -104,15 +104,16 @@ Project AEGIS is organized into 9 primary directories, each maintained with an a
 ### Automated Setup Script
 Run the turnkey installation script:
 ```bash
-chmod +x scripts/00_setup_environment.sh
-./scripts/00_setup_environment.sh
+chmod +x scripts/00_setup_env.sh
+./scripts/00_setup_env.sh
 ```
 This script automatically:
-1. Verifies Python 3, GPU hardware, and CUDA 13 drivers via `nvidia-smi`.
-2. Installs the stable **Rust toolchain** (`rustup`) required by `deepfilternet[train]` maturin builds.
-3. Installs `torch` and `torchaudio` with CUDA acceleration.
-4. Builds and installs `deepfilternet[train]>=0.5.6` and `mamba-ssm>=2.2.0`.
-5. Verifies all model imports and creates directory structures.
+1. Detects your active Python environment (virtualenv / Conda) to avoid sandboxed execution.
+2. Checks for pre-installed PyTorch (v2.7+) or installs CUDA 12.6/13 wheels.
+3. Upgrades build tools (`ninja`, `packaging`, `maturin`, `wheel`).
+4. Installs `deepfilternet>=0.5.6` pre-built runtime without `deepfilterdataloader` build failures.
+5. Compiles and installs `causal-conv1d>=1.4.0` and `mamba-ssm>=2.2.0` with `--no-build-isolation` to detect your active PyTorch.
+6. Verifies all model imports, initializes storage hierarchy, and validates `.env` API tokens.
 
 ### Environment Configuration (.env)
 Copy the production environment configuration:

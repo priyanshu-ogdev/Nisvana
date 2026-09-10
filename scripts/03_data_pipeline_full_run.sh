@@ -65,7 +65,7 @@ echo "==========================================================================
 START_TIME=$(date +%s)
 
 # Step 0: Ensure directory tree exists
-bash "${SCRIPT_DIR}/00_setup_environment.sh"
+bash "${SCRIPT_DIR}/00_setup_env.sh"
 
 # Step 1: Multi-Source Download in Full Mode
 echo ""

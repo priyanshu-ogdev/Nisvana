@@ -11,7 +11,7 @@
 # ALWAYS install with --no-build-isolation:
 #   pip install --no-build-isolation -r requirements-mamba.txt
 # Or run:
-#   bash scripts/00_setup_environment.sh (or scripts/00_setup_env.sh)
+#   bash scripts/00_setup_env.sh
 # ==============================================================================
 
 causal-conv1d>=1.4.0
