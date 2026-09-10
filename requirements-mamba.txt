@@ -1,0 +1,18 @@
+# ==============================================================================
+# Project AEGIS — Mamba SSM & Causal-Conv1D Dependencies (Model 3)
+# Target: DGX Spark GB10 (Grace Blackwell, CUDA 13)
+# ==============================================================================
+# CRITICAL INSTALLATION REQUIREMENT:
+# causal-conv1d and mamba-ssm compile C++/CUDA extensions against your active
+# PyTorch installation. Because standard pip build isolation creates a clean
+# temporary sandbox lacking PyTorch, compiling them with standard pip triggers:
+#   ModuleNotFoundError: No module named 'torch'
+#
+# ALWAYS install with --no-build-isolation:
+#   pip install --no-build-isolation -r requirements-mamba.txt
+# Or run:
+#   bash scripts/00_setup_environment.sh (or scripts/00_setup_env.sh)
+# ==============================================================================
+
+causal-conv1d>=1.4.0
+mamba-ssm>=2.2.0

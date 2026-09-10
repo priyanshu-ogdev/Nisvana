@@ -9,6 +9,8 @@ This directory contains POSIX-compliant, hardened Bash scripts (`set -euo pipefa
 ```
 scripts/
 ├── 00_setup_environment.sh         # [Step 0] Full hardware, Rust, CUDA 13, and PyTorch environment setup
+├── 00_setup_env.sh                 # [Step 0] Convenience alias for 00_setup_environment.sh
+├── common_env.sh                   # [Helper] Shared Python/PyTorch non-sandboxed environment resolver
 ├── 01_data_pipeline_dry_run.sh     # [Step 1] Zero-disk-write endpoint & Azure Blob reachability probe
 ├── 02_data_pipeline_sample_test.sh # [Step 2] End-to-end integration test with auto-clean blank slate
 ├── 03_data_pipeline_full_run.sh    # [Step 3] Full production multi-worker 4TB pipeline runner
@@ -69,11 +71,13 @@ The master training script connects all model training layers into a single, coh
 
 ## 3. Data Pipeline & Verification Scripts
 
-### `00_setup_environment.sh`
-- Verifies Python 3, GPU hardware, and CUDA 13 drivers via `nvidia-smi`.
+### `00_setup_environment.sh` (or `00_setup_env.sh`)
+- Detects the active Python environment (virtualenv / Conda / system) using `common_env.sh` to prevent accidental sandboxed system Python execution.
+- Checks if PyTorch (v2.7+) is already active; installs CUDA 12.6/13 PyTorch wheels only if absent.
+- Upgrades build tools (`ninja`, `packaging`, `maturin`, `wheel`) for parallel CUDA extension builds.
 - Installs the stable Rust toolchain (`rustup`) for `deepfilternet[train]`.
-- Installs PyTorch, torchaudio, and webdataset.
-- Builds and installs `mamba-ssm>=2.2.0` and `causal-conv1d`.
+- Compiles and installs `causal-conv1d>=1.4.0` and `mamba-ssm>=2.2.0` with `--no-build-isolation`, directly linking against your active PyTorch without pip sandbox isolation.
+- Loads `.env` and `data_forge/.env` and validates external API tokens (including `KAGGLE_ACCESS_TOKEN`).
 
 ### `01_data_pipeline_dry_run.sh`
 - Probes all 10 authoritative datasets via HTTP HEAD/GET range requests without writing multi-GB files.

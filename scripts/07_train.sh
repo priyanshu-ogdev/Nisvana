@@ -43,9 +43,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/common_env.sh" 2>/dev/null || true
 
 cd "${ROOT_DIR}"
-PY_BIN="$(command -v python3 || command -v python)"
+if declare -f detect_python > /dev/null; then
+    PY_BIN="$(detect_python)"
+else
+    PY_BIN="$(command -v python3 || command -v python)"
+fi
 
 # Detect compute device and hardware
 GPU_INFO="CPU"
