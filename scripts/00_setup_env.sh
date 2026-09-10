@@ -53,12 +53,17 @@ fi
 PY_VERSION=$(${PY_BIN} --version 2>&1)
 echo "  Target Python: ${PY_VERSION} at ${PY_BIN}"
 
-# Detect if PyTorch is already present
-HAS_TORCH=false
+# Detect if PyTorch with CUDA is already present
+HAS_TORCH_CUDA=false
 if ${PY_BIN} -c "import torch" 2>/dev/null; then
-    HAS_TORCH=true
-    TORCH_INFO=$(${PY_BIN} -c "import torch; print(f'v{torch.__version__} | CUDA Available: {torch.cuda.is_available()}')")
+    CUDA_AVAIL=$(${PY_BIN} -c "import torch; print(torch.cuda.is_available())" 2>/dev/null || echo "False")
+    TORCH_INFO=$(${PY_BIN} -c "import torch; print(f'v{torch.__version__} | CUDA Available: {torch.cuda.is_available()}')" 2>/dev/null || echo "Unknown")
     echo "  ✓ Active PyTorch found: ${TORCH_INFO}"
+    if [ "${CUDA_AVAIL}" = "True" ]; then
+        HAS_TORCH_CUDA=true
+    else
+        echo "  ⚠ PyTorch is CPU-only. Will be upgraded to CUDA version."
+    fi
 else
     echo "  PyTorch not found in target Python. Will be installed."
 fi
@@ -106,11 +111,12 @@ ${PY_BIN} -m pip install --upgrade pip setuptools wheel build ninja packaging ma
 # 4. Core Dependencies & PyTorch Installation
 # ==============================================================================
 echo ""
-if [ "${HAS_TORCH}" = "false" ]; then
+if [ "${HAS_TORCH_CUDA}" = "false" ]; then
     echo ">>> [4/7] Installing PyTorch with CUDA support..."
-    ${PY_BIN} -m pip install torch torchaudio torchvision --extra-index-url https://download.pytorch.org/whl/cu126 2>&1 | tail -5
+    ${PY_BIN} -m pip uninstall -y torch torchaudio torchvision 2>/dev/null || true
+    ${PY_BIN} -m pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu126 2>&1 | tail -5
 else
-    echo ">>> [4/7] Reusing active PyTorch installation (${TORCH_INFO})..."
+    echo ">>> [4/7] Reusing active CUDA PyTorch installation (${TORCH_INFO})..."
 fi
 
 echo "  Installing base requirements from requirements.txt..."
