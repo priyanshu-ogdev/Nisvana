@@ -343,3 +343,37 @@ class ForgeMixingConfig:
     
     # Random seed for reproducible dataset generation
     seed: int = 42
+
+    # ==========================================================================
+    # Gunfire-specific mixing overrides (review pass: gunfire is the primary
+    # generalization target; real source diversity is narrow -- only 3 real
+    # sources exist in the actual fetcher code (gunshot_dryad's one field
+    # session, MAD's gunshot-mapped subset, NOISEX-92's single machinegun.wav
+    # burst-fire clip). NIJ/Kabealo/FSD50K were cited in the bibliography but
+    # have no fetcher implementation anywhere in data_forge/fetcher/ -- they
+    # contribute zero real hours today. These overrides squeeze more usable
+    # acoustic diversity out of the real clips that DO exist, without
+    # synthesizing new gunshot waveforms (that path was already tried and
+    # explicitly reversed for submission-authenticity reasons -- see
+    # docs/Nisvana_PRD.md Sec 3.2).
+    # ==========================================================================
+
+    # Applied when the sampled noise clip's unified_class is GUNSHOT_FIREARM.
+    # Near-1.0 vs. the global 0.65: RIR convolution is real-recording
+    # environment diversity manufactured from real recordings (not
+    # synthesis), and environment diversity is exactly what's thin in a
+    # single-field-session source like gunshot_dryad.
+    gunfire_rir_probability: float = 0.95
+
+    # Global min_snr_db=-5.0 doesn't reach real close-proximity combat
+    # conditions. Gunfire-specific mixing goes lower to exercise the model
+    # on harder impulsive cases than the global default covers.
+    gunfire_min_snr_db: float = -15.0
+    gunfire_max_snr_db: float = 20.0
+
+    # Probability that a sampled gunfire noise clip is replaced by a
+    # multi-shot composite (see augmentor/multishot_composite.py) instead of
+    # a single real clip used as-is -- overlay/concatenation of independent
+    # real recordings to simulate automatic fire / multiple shooters. This
+    # recombines real audio; it does not synthesize a new gunshot waveform.
+    gunfire_multishot_composite_probability: float = 0.35
