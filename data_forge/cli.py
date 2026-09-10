@@ -37,11 +37,12 @@ def cmd_fetch(args):
     manager = FetchManager(RAW_DIR)
     is_full = getattr(args, "full_mode", False) or getattr(args, "server_mode", False)
     sample_mode = args.sample_mode and not is_full
+    max_workers = getattr(args, "max_workers", None)
 
     if args.source and args.source != "all":
         results = manager.fetch_source(args.source, sample_mode=sample_mode, dry_run=args.dry_run)
     else:
-        results = manager.fetch_all(sample_mode=sample_mode, dry_run=args.dry_run)
+        results = manager.fetch_all(sample_mode=sample_mode, dry_run=args.dry_run, max_workers=max_workers)
 
     print(">>> Fetch completed.")
 
@@ -55,8 +56,20 @@ def cmd_preprocess(args):
 
 
 def cmd_augment(args):
+    real_only = (
+        getattr(args, "real_only", False)
+        or getattr(args, "no_augment", False)
+        or os.environ.get("DATA_FORGE_REAL_ONLY", "true").lower() == "true"
+        or os.environ.get("DATA_FORGE_NO_AUGMENT", "true").lower() == "true"
+    )
+    if real_only:
+        print(">>> [Policy] Real-recordings-only policy active (DATA_FORGE_REAL_ONLY=true).")
+        print(">>> Synthetic data generation and augmentations are disabled.")
+        print(">>> Models will generalize directly from authentic recordings via SOTA losses & curriculum.")
+        return
+
     print(">>> Executing Grounded Per-Source Augmentation...")
-    engine = AugmentationEngine()
+    engine = AugmentationEngine(real_only=False)
     counts = engine.run_augmentation()
     print(f">>> Augmentation completed. Generated: {counts}")
 
@@ -333,6 +346,7 @@ def main():
     p_fetch.add_argument("--full-mode", action="store_true", help="Full multi-terabyte production download on 4TB storage")
     p_fetch.add_argument("--server-mode", action="store_true", help=argparse.SUPPRESS)  # Alias for backwards compatibility
     p_fetch.add_argument("--dry-run", action="store_true", help="Verify endpoints without writing files")
+    p_fetch.add_argument("--max-workers", type=int, default=None, help="Concurrent workers for parallel multi-source downloading")
 
     # preprocess
     p_pre = subparsers.add_parser("preprocess", help="Run 10-step preprocessing pipeline")
@@ -340,7 +354,10 @@ def main():
     p_pre.add_argument("--commercial-strict", action="store_true", help="Filter out CC-BY-NC files")
 
     # augment
-    subparsers.add_parser("augment", help="Run grounded per-source augmentation")
+    p_aug = subparsers.add_parser("augment", help="Run grounded per-source augmentation")
+    p_aug.add_argument("--real-only", action="store_true", default=True, help="Enforce real recordings only (skips synthetic augmentations)")
+    p_aug.add_argument("--no-augment", action="store_true", default=True, help="Disable augmentations")
+    p_aug.add_argument("--force-augment", action="store_false", dest="real_only", help="Force synthetic augmentations")
 
     # mix
     p_mix = subparsers.add_parser("mix", help="Run multi-branch data-forge mixing")
@@ -362,6 +379,9 @@ def main():
     p_all.add_argument("--full-mode", action="store_true", help="Run full production pipeline on 4TB storage")
     p_all.add_argument("--server-mode", action="store_true", help=argparse.SUPPRESS)  # Alias for backwards compatibility
     p_all.add_argument("--dry-run", action="store_true", help="Dry run verification")
+    p_all.add_argument("--real-only", action="store_true", default=True, help="Enforce real recordings only (no synthetic data or augmentations)")
+    p_all.add_argument("--no-augment", action="store_true", default=True, help="Disable augmentations")
+    p_all.add_argument("--force-augment", action="store_false", dest="real_only", help="Force synthetic augmentations")
     p_all.add_argument("--max-workers", type=int, default=4)
     p_all.add_argument("--commercial-strict", action="store_true")
     p_all.add_argument("--num-mixtures", type=int, default=50)

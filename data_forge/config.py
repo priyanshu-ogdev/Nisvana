@@ -74,6 +74,15 @@ BRANCH_SE = FORGE_DIR / "branch_speech_enhancement"  # Models 1-3: DeepFilterNet
 BRANCH_CLASSIFIER = FORGE_DIR / "branch_classifier"  # Model 4: SNR / Harmonic Classifier
 BRANCH_AEC = FORGE_DIR / "branch_aec"                # Model 5: Gated AEC
 
+# Real recordings only policy (enforced by user specification):
+# All training and evaluation uses 100% authentic acoustic recordings.
+# Synthetic audio generation and augmentations (e.g. pitch shifting, time stretching)
+# are disabled. Robustness and generalization are achieved directly through
+# advanced ML architecture, loss functions (multires/SDR/IS3), weighted shard sampling,
+# and noise-type curriculum learning.
+REAL_RECORDINGS_ONLY = os.environ.get("DATA_FORGE_REAL_ONLY", "true").lower() == "true"
+NO_AUGMENT = os.environ.get("DATA_FORGE_NO_AUGMENT", "true").lower() == "true"
+
 
 # ==============================================================================
 # Audio Processing Standards (Part 3)

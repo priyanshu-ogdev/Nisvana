@@ -76,13 +76,40 @@ class ShardWriter:
             )
             self._shard_idx += 1
 
-    def add_sample(self, key: str, files: Dict[str, bytes]) -> None:
+    def add_sample(
+        self,
+        key: str,
+        files: Dict[str, bytes],
+        sync_tier: Optional[int] = None,
+        source_dataset: Optional[str] = None,
+    ) -> None:
         """
         Adds one sample to the current shard. `files` maps extension
         (e.g. "noisy.wav", "clean.wav", "json") to raw bytes.
+
+        If `sync_tier` or `source_dataset` are provided AND a "json"
+        sidecar already exists in `files`, they are injected into the
+        JSON payload — ensuring downstream training (weighted_shard_sampler)
+        can read them without a separate lookup table. If no "json" key
+        exists, one is created with just these fields.
         """
         if self._count_in_shard >= self.samples_per_shard:
             self._open_new_shard()
+
+        # Inject sync_tier and source_dataset into JSON metadata sidecar
+        if sync_tier is not None or source_dataset is not None:
+            meta = {}
+            if "json" in files:
+                try:
+                    meta = json.loads(files["json"].decode("utf-8"))
+                except Exception:
+                    meta = {}
+            if sync_tier is not None:
+                meta["sync_tier"] = sync_tier
+            if source_dataset is not None:
+                meta["source_dataset"] = source_dataset
+            files = dict(files)  # don't mutate caller's dict
+            files["json"] = json.dumps(meta, ensure_ascii=False).encode("utf-8")
 
         for ext, data in files.items():
             info = tarfile.TarInfo(name=f"{key}.{ext}")

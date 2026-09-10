@@ -32,10 +32,18 @@ class AugmentationEngine:
         processed_dir: Path = PROCESSED_DIR,
         augmented_dir: Path = AUGMENTED_DIR,
         sample_rate: int = TARGET_SAMPLE_RATE,
+        real_only: Optional[bool] = None,
     ):
         self.processed_dir = Path(processed_dir)
         self.augmented_dir = Path(augmented_dir)
         self.sample_rate = sample_rate
+        if real_only is not None:
+            self.real_only = real_only
+        else:
+            self.real_only = (
+                os.environ.get("DATA_FORGE_REAL_ONLY", "true").lower() == "true"
+                or os.environ.get("DATA_FORGE_NO_AUGMENT", "true").lower() == "true"
+            )
         self.augmented_dir.mkdir(parents=True, exist_ok=True)
 
         self.time_stretcher = WsolaTimeStretcher(sample_rate=sample_rate)
@@ -117,6 +125,10 @@ class AugmentationEngine:
         """
         Runs augmentation across processed audio files.
         """
+        if self.real_only:
+            logger.info("Real-recordings-only policy active (DATA_FORGE_REAL_ONLY=true). Skipping all synthetic data augmentations. Generalization is handled by ML layer.")
+            return {}
+
         logger.info("=== PROJECT AEGIS: GROUNDED AUGMENTATION RUNNER START ===")
         generated_counts: Dict[str, int] = {}
 

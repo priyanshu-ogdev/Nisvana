@@ -18,10 +18,19 @@ class RirFetcher(BaseFetcher):
     """
 
     OPENSLR_RIR_URL = "https://www.openslr.org/resources/28/rirs_noises.zip"
+    OPENSLR_FALLBACK_URLS = [
+        "https://openslr.elda.org/resources/28/rirs_noises.zip",
+        "https://openslr.magicdatatech.com/resources/28/rirs_noises.zip",
+    ]
 
     def fetch(self, sample_mode: bool = False, dry_run: bool = False) -> List[DownloadResult]:
         dest = self.output_dir / "rirs_noises.zip"
-        res = self.download_file(self.OPENSLR_RIR_URL, dest, dry_run=dry_run)
+        res = self.download_file(
+            self.OPENSLR_RIR_URL,
+            dest,
+            dry_run=dry_run,
+            fallback_urls=self.OPENSLR_FALLBACK_URLS,
+        )
 
         # In sample_mode or if download deferred, generate verified synthetic RIRs
         extracted_dir = self.output_dir / "rir_wavs"
@@ -30,15 +39,21 @@ class RirFetcher(BaseFetcher):
         if not dry_run and res.success and dest.exists():
             try:
                 with zipfile.ZipFile(dest, "r") as z:
-                    rirs = [m for m in z.namelist() if m.endswith(".wav") and "simulated_rirs" in m]
+                    # Prioritize authentic measured acoustic RIRs (RWCP, REVERB, AIR)
+                    real_rirs = [m for m in z.namelist() if m.endswith(".wav") and "real_rirs" in m]
+                    sim_rirs = [m for m in z.namelist() if m.endswith(".wav") and "simulated_rirs" in m]
+                    rirs = real_rirs if real_rirs else sim_rirs
                     sample_rirs = rirs[:20] if sample_mode else rirs
                     z.extractall(extracted_dir, members=sample_rirs)
-                logger.info("Extracted %d RIRs from OpenSLR-28", len(sample_rirs))
+                logger.info("Extracted %d authentic RIRs from OpenSLR-28 (%s)", len(sample_rirs), "real" if real_rirs else "simulated")
             except Exception as e:
                 logger.warning("RIR extraction note: %s", e)
 
-        # Guarantee room impulse responses exist by generating calibrated synthetic RIRs
-        self.generate_calibrated_rirs(extracted_dir, count=10)
+        # Real recordings only policy: do not generate synthetic RIRs when real data policy is active
+        import os
+        real_only = os.environ.get("DATA_FORGE_REAL_ONLY", "true").lower() == "true"
+        if not real_only and not any(extracted_dir.glob("*.wav")):
+            self.generate_calibrated_rirs(extracted_dir, count=10)
         return [res]
 
     @staticmethod

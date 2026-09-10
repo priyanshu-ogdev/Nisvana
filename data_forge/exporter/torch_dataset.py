@@ -61,13 +61,57 @@ class AegisSpeechEnhancementIterableDataset(_BaseAegisShardDataset):
     Yields dicts with keys: 'noisy.wav', 'clean.wav', 'rir.wav' (optional),
     'json' (mixture metadata incl. target/measured SNR, unified_class,
     sync_tier). Feeds Models 1-3 (DeepFilterNet3 x2, CleanUMamba).
+
+    max_sample_len_s: Maximum clip duration in seconds. Clips longer than
+        this are cropped; clips shorter than MIN_FFT_LEN (2048 samples) are
+        zero-padded. This enforcement was previously documented in config but
+        never applied — training received variable-length samples that could
+        exceed GPU memory or be too short for the multi-res STFT loss's largest
+        FFT size.
     """
 
-    def __init__(self, shard_dir: Path, split: str = "train"):
+    MIN_FFT_LEN = 2048  # Matches multires_loss.py's largest-small FFT size
+
+    def __init__(
+        self,
+        shard_dir: Path,
+        split: str = "train",
+        max_sample_len_s: float = 4.0,
+        sample_rate: int = 48000,
+    ):
         super().__init__(shard_dir, split, shard_prefix="se")
+        self.max_sample_len = int(max_sample_len_s * sample_rate)
         self.dataset = (
             self.dataset.decode(wds_decode_audio=True) if hasattr(self.dataset, "decode") else self.dataset
         )
+
+    def _enforce_length(self, sample: dict) -> dict:
+        """Crops or pads audio tensors to enforce max_sample_len_s."""
+        import numpy as np
+        for key in ("noisy.wav", "clean.wav", "rir.wav"):
+            audio = sample.get(key)
+            if audio is None:
+                continue
+            if isinstance(audio, bytes):
+                continue  # raw bytes — caller will decode separately
+            if hasattr(audio, '__len__'):
+                arr = np.asarray(audio, dtype=np.float32).squeeze()
+                # Crop
+                if len(arr) > self.max_sample_len:
+                    arr = arr[:self.max_sample_len]
+                # Pad if below minimum FFT length
+                elif len(arr) < self.MIN_FFT_LEN:
+                    arr = np.pad(arr, (0, self.MIN_FFT_LEN - len(arr)))
+                # Lazy normalization to [-1, 1] float32
+                peak = np.max(np.abs(arr))
+                if peak > 1.0:
+                    arr = arr / peak
+                sample[key] = arr
+        return sample
+
+    def __iter__(self):
+        for sample in self.dataset:
+            yield self._enforce_length(sample)
 
 
 class AegisClassifierIterableDataset(_BaseAegisShardDataset):

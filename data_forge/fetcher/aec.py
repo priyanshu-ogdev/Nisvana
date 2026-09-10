@@ -52,7 +52,7 @@ class AecChallengeFetcher(BaseFetcher):
                 with zipfile.ZipFile(zip_path, "r") as z:
                     wav_members = [m for m in z.namelist() if m.endswith(".wav")]
                     if sample_mode:
-                        sample_prefixes = set([w.rsplit("_", 1)[0] for w in wav_files[:20]])
+                        sample_prefixes = set([w.rsplit("_", 1)[0] for w in wav_members[:20]])
                         wav_members = [w for w in wav_members if any(w.startswith(p) for p in list(sample_prefixes)[:5])]
                     z.extractall(extract_target, members=wav_members)
                 logger.info("Extracted %d AEC challenge files from zip.", len(wav_members))

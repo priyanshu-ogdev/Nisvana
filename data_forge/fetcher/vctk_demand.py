@@ -44,8 +44,11 @@ class VctkDemandFetcher(BaseFetcher):
 
         for bitstream_id, zip_name, expected_md5 in archives_to_fetch:
             url = f"{self.BASE_URL}/{bitstream_id}/download"
+            fallback_urls = [
+                f"https://datashare.ed.ac.uk/bitstream/handle/10283/2791/{zip_name}",
+            ]
             dest = self.output_dir / zip_name
-            res = self.download_file(url, dest, expected_md5=expected_md5, dry_run=dry_run)
+            res = self.download_file(url, dest, expected_md5=expected_md5, dry_run=dry_run, fallback_urls=fallback_urls)
             results.append(res)
 
             if not dry_run and res.success and dest.exists():

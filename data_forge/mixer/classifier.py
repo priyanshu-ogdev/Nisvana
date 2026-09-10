@@ -25,6 +25,29 @@ logger = logging.getLogger("DataForge.BranchClassifier")
 class ClassifierBranch:
     """Generates training dataset and labels for Model 4."""
 
+    # FIX (this pass): previously, build_dataset_from_mixtures read and
+    # labeled each WHOLE mixture (4.0s, per ForgeMixingConfig.target_duration_sec)
+    # as one classification sample. But Model 4 exists specifically as a
+    # low-latency, per-chunk gating signal -- escalation_router.py calls it
+    # on 480-sample (10ms) chunks in the live streaming path, a 400x
+    # duration mismatch from what it was actually trained on, and more
+    # fundamentally a task-granularity mismatch: a 4-second clip can easily
+    # contain BOTH harmonic background AND an impulsive transient within
+    # it, so a single whole-clip label is a poor training signal for the
+    # instantaneous, transient-onset-sensitive decision the model is
+    # actually deployed to make. Fixed by slicing each mixture into
+    # CLASSIFIER_WINDOW_SEC windows and labeling each independently.
+    #
+    # 0.2s chosen as a reasoned middle ground -- NOT a literature citation
+    # (no published guidance for this exact window size was found for this
+    # specific gating task): long enough for compute_harmonicity_index's
+    # autocorrelation approach to have enough periods of a low-frequency
+    # engine/rotor tone to lock onto, short enough to stay responsive for
+    # real-time gating. Validate against AEGIS's own eval curve, same as
+    # every other reasoned-default in this design, before treating 0.2s
+    # as final.
+    CLASSIFIER_WINDOW_SEC: float = 0.2
+
     def __init__(self, output_dir: Path = BRANCH_CLASSIFIER):
         self.output_dir = Path(output_dir)
         self.audio_dir = self.output_dir / "audio"
@@ -108,6 +131,7 @@ class ClassifierBranch:
         logger.info("Building Model 4 Classifier dataset from %d mixtures...", len(mixture_records))
         classified_samples = []
         noise_class_map = noise_class_map or {}
+        window_samples = int(self.CLASSIFIER_WINDOW_SEC * TARGET_SAMPLE_RATE)
 
         for rec in mixture_records:
             clip_id = rec["clip_id"]
@@ -118,44 +142,66 @@ class ClassifierBranch:
             audio, sr = sf.read(noisy_src, dtype="float32")
             snr = rec["measured_snr_db"]
             noise_src_name = rec["noise_source"]
-
-            # Lookup noise class
             unified_class = noise_class_map.get(noise_src_name, "general_noise")
-            category = self.map_to_3way_category(unified_class, snr)
-            harmonicity = self.compute_harmonicity_index(audio, sr)
 
-            # Copy or link file to classifier audio directory
-            dest_file = self.audio_dir / f"{clip_id}.wav"
-            sf.write(dest_file, audio, sr, subtype="PCM_16")
+            # Slice into independent windows rather than labeling the whole
+            # clip once -- see CLASSIFIER_WINDOW_SEC's docstring above for
+            # why. A trailing partial window shorter than half the target
+            # length is dropped rather than kept undersized and padded,
+            # since a heavily-padded short window would itself be an
+            # unrealistic training example relative to real deployment.
+            n_windows = max(1, len(audio) // window_samples)
+            for w in range(n_windows):
+                start = w * window_samples
+                end = start + window_samples
+                if end > len(audio):
+                    if (len(audio) - start) < window_samples // 2:
+                        continue
+                    end = len(audio)
+                window_audio = audio[start:end]
 
-            gate_class = (
-                "harmonic" if category == ClassifierCategory.STATIONARY_HARMONIC
-                else "impulsive" if category == ClassifierCategory.NON_STATIONARY_TRANSIENT
-                else "speech_dominant"
-            )
+                category = self.map_to_3way_category(unified_class, snr)
+                harmonicity = self.compute_harmonicity_index(window_audio, sr)
 
-            sample_record = {
-                "clip_id": clip_id,
-                "split": rec.get("split", "train"),
-                "audio_path": str(dest_file),
-                "gate_class": gate_class,
-                "category_label": category.value,
-                "category_index": (
-                    0 if category == ClassifierCategory.STATIONARY_HARMONIC
-                    else 1 if category == ClassifierCategory.NON_STATIONARY_TRANSIENT
-                    else 2
-                ),
-                "true_snr_db": snr,
-                "harmonicity_index": harmonicity,
-                "noise_class": unified_class,
-                "duration_sec": rec["duration_sec"],
-            }
-            classified_samples.append(sample_record)
+                window_clip_id = f"{clip_id}_w{w:03d}"
+                dest_file = self.audio_dir / f"{window_clip_id}.wav"
+                sf.write(dest_file, window_audio, sr, subtype="PCM_16")
 
-            # Write per-sample JSON sidecar for WebDataset sharding
-            json_file = self.output_dir / f"{clip_id}.json"
-            with open(json_file, "w", encoding="utf-8") as jf:
-                json.dump(sample_record, jf, indent=2)
+                gate_class = (
+                    "harmonic" if category == ClassifierCategory.STATIONARY_HARMONIC
+                    else "impulsive" if category == ClassifierCategory.NON_STATIONARY_TRANSIENT
+                    else "speech_dominant"
+                )
+
+                sample_record = {
+                    "clip_id": window_clip_id,
+                    "split": rec.get("split", "train"),
+                    "audio_path": str(dest_file),
+                    "gate_class": gate_class,
+                    "category_label": category.value,
+                    "category_index": (
+                        0 if category == ClassifierCategory.STATIONARY_HARMONIC
+                        else 1 if category == ClassifierCategory.NON_STATIONARY_TRANSIENT
+                        else 2
+                    ),
+                    "true_snr_db": snr,
+                    "harmonicity_index": harmonicity,
+                    "noise_class": unified_class,
+                    "duration_sec": self.CLASSIFIER_WINDOW_SEC,
+                    "source_clip_id": clip_id,   # traceable back to the parent 4.0s mixture
+                }
+                classified_samples.append(sample_record)
+
+                # Write per-sample JSON sidecar for WebDataset sharding.
+                # FIX (this pass): this write was previously OUTSIDE the
+                # per-window loop, using the stale outer-loop `clip_id` --
+                # meaning only the LAST window of each mixture ever got a
+                # JSON sidecar written, and every other window's shard
+                # entry would have been missing its metadata entirely.
+                # Moved inside the loop, using the correct per-window id.
+                json_file = self.output_dir / f"{window_clip_id}.json"
+                with open(json_file, "w", encoding="utf-8") as jf:
+                    json.dump(sample_record, jf, indent=2)
 
         # Write labels.json (accumulative across splits)
         labels_path = self.output_dir / "labels.json"

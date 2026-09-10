@@ -60,18 +60,65 @@ class FetchManager:
         self,
         sample_mode: bool = False,
         dry_run: bool = False,
+        max_workers: Optional[int] = None,
     ) -> Dict[str, List[DownloadResult]]:
-        """Fetches all datasets across the verified bibliography."""
-        logger.info("=== PROJECT AEGIS DATA-FORGE: MULTI-SOURCE FETCH INITIATED ===")
+        """
+        Fetches all datasets across the verified bibliography with optional multi-source parallelization.
+        """
+        import os
+        import concurrent.futures
+
+        concurrency = max_workers or int(os.environ.get("DATA_FORGE_FETCH_MAX_CONCURRENT", "4"))
+        logger.info(
+            "=== PROJECT AEGIS DATA-FORGE: MULTI-SOURCE FETCH INITIATED (concurrency=%d) ===",
+            concurrency,
+        )
         all_results = {}
-        for name, fetcher in self.fetchers.items():
-            logger.info(">>> Fetching: %s", name)
-            try:
-                results = fetcher.fetch(sample_mode=sample_mode, dry_run=dry_run)
-                all_results[name] = results
-            except Exception as e:
-                logger.error("Error fetching %s: %s", name, e)
-                all_results[name] = [DownloadResult(success=False, destination=self.raw_dir / name, bytes_downloaded=0, elapsed_sec=0.0, md5="", error=str(e))]
+
+        if concurrency > 1 and not dry_run:
+            logger.info("Executing parallel downloads across sources with %d worker threads...", concurrency)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
+                future_to_name = {
+                    executor.submit(fetcher.fetch, sample_mode=sample_mode, dry_run=dry_run): name
+                    for name, fetcher in self.fetchers.items()
+                }
+                for future in concurrent.futures.as_completed(future_to_name):
+                    name = future_to_name[future]
+                    try:
+                        results = future.result()
+                        all_results[name] = results
+                        logger.info(">>> Completed fetch for source: %s (%d files)", name, len(results))
+                    except Exception as e:
+                        logger.error("Error fetching %s: %s", name, e)
+                        all_results[name] = [
+                            DownloadResult(
+                                success=False,
+                                destination=self.raw_dir / name,
+                                bytes_downloaded=0,
+                                elapsed_sec=0.0,
+                                md5="",
+                                error=str(e),
+                            )
+                        ]
+        else:
+            # Sequential execution for dry-runs or single-worker
+            for name, fetcher in self.fetchers.items():
+                logger.info(">>> Fetching: %s", name)
+                try:
+                    results = fetcher.fetch(sample_mode=sample_mode, dry_run=dry_run)
+                    all_results[name] = results
+                except Exception as e:
+                    logger.error("Error fetching %s: %s", name, e)
+                    all_results[name] = [
+                        DownloadResult(
+                            success=False,
+                            destination=self.raw_dir / name,
+                            bytes_downloaded=0,
+                            elapsed_sec=0.0,
+                            md5="",
+                            error=str(e),
+                        )
+                    ]
 
         self.save_fetch_summary(all_results)
         return all_results

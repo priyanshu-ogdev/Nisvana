@@ -18,6 +18,7 @@ class DroneAudioSetFetcher(BaseFetcher):
     """
 
     BASE_RESOLVE_URL = "https://huggingface.co/datasets/ahlab-drone-project/DroneAudioSet/resolve/main"
+    MIRROR_RESOLVE_URL = "https://hf-mirror.com/datasets/ahlab-drone-project/DroneAudioSet/resolve/main"
     PARQUET_FILES = [
         "drone-only/train_001-00000-of-00001.parquet",
         "drone-only/train_002-00000-of-00001.parquet",
@@ -32,9 +33,10 @@ class DroneAudioSetFetcher(BaseFetcher):
 
         for rel_path in files:
             url = f"{self.BASE_RESOLVE_URL}/{rel_path}"
+            fallback_urls = [f"{self.MIRROR_RESOLVE_URL}/{rel_path}"]
             filename = Path(rel_path).name
             dest = self.output_dir / filename
-            res = self.download_file(url, dest, dry_run=dry_run)
+            res = self.download_file(url, dest, dry_run=dry_run, fallback_urls=fallback_urls)
             results.append(res)
 
             if not dry_run and res.success and dest.exists():
