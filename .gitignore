@@ -67,7 +67,8 @@ Thumbs.db
 # aegis-backend
 aegis-backend/venv/
 aegis-backend/.env
-aegis-backend/models/
+aegis-backend/models/*
+!aegis-backend/models/export_report.md
 aegis-backend/__pycache__/
 aegis-backend/**/__pycache__/
 aegis-backend/.pytest_cache/
