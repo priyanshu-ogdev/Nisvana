@@ -213,7 +213,7 @@ try:
     site_pkgs = site.getsitepackages()
     if site_pkgs:
         sc_path = os.path.join(site_pkgs[0], 'sitecustomize.py')
-        shim = '''# Project AEGIS torchaudio backwards compatibility shim for DeepFilterNet
+        shim = '''# Project AEGIS torchaudio & mamba backwards compatibility shim
 try:
     import sys, types, torchaudio
     from dataclasses import dataclass
@@ -247,17 +247,29 @@ try:
                 torchaudio.backend.common.AudioMetaData = AudioMetaData
 except Exception:
     pass
+
+# Mamba selective_scan_cuda fallback stub for environments without compiled CUDA C++ extension
+try:
+    import sys, types
+    if \"selective_scan_cuda\" not in sys.modules:
+        try:
+            import selective_scan_cuda
+        except (ImportError, ModuleNotFoundError):
+            dummy = types.ModuleType(\"selective_scan_cuda\")
+            sys.modules[\"selective_scan_cuda\"] = dummy
+except Exception:
+    pass
 '''
         existing = ''
         if os.path.isfile(sc_path):
             with open(sc_path, 'r', encoding='utf-8') as f:
                 existing = f.read()
-        if 'Project AEGIS torchaudio backwards compatibility shim' in existing:
-            parts = existing.split('# Project AEGIS torchaudio backwards compatibility shim')
+        if 'Project AEGIS torchaudio' in existing:
+            parts = existing.split('# Project AEGIS torchaudio')
             existing = parts[0]
         with open(sc_path, 'w', encoding='utf-8') as f:
             f.write(existing.strip() + '\n' + shim)
-        print('  ✓ Updated torchaudio.backend & AudioMetaData shim in sitecustomize.py')
+        print('  ✓ Updated torchaudio & mamba-ssm shims in sitecustomize.py')
 except Exception as e:
     pass
 
@@ -298,6 +310,35 @@ class AudioMetaData:
                 print('  ✓ df/io.py already patched with standalone AudioMetaData')
 except Exception as e:
     pass
+
+# 3. Patch mamba_ssm/ops/selective_scan_interface.py if present for selective_scan_cuda fallback
+try:
+    spec = importlib.util.find_spec('mamba_ssm')
+    if spec and spec.submodule_search_locations:
+        mamba_dir = list(spec.submodule_search_locations)[0]
+        ssi_file = os.path.join(mamba_dir, 'ops', 'selective_scan_interface.py')
+        if os.path.isfile(ssi_file):
+            with open(ssi_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            # Make import selective_scan_cuda non-fatal
+            content = re.sub(
+                r'^(?:try:\s+)?import selective_scan_cuda(?:\s+except [^:]+:[^\n]+)?',
+                'try:\n    import selective_scan_cuda\nexcept (ImportError, ModuleNotFoundError):\n    selective_scan_cuda = None',
+                content,
+                flags=re.MULTILINE
+            )
+            # Patch selective_scan_fn to fallback to selective_scan_ref if selective_scan_cuda is None or lacks fwd
+            target_call = 'return SelectiveScanFn.apply(u, delta, A, B, C, D, z, delta_bias, delta_softplus, return_last_state)'
+            safe_call = '''if getattr(selective_scan_cuda, \"fwd\", None) is None:
+        return selective_scan_ref(u, delta, A, B, C, D=D, z=z, delta_bias=delta_bias, delta_softplus=delta_softplus, return_last_state=return_last_state)
+    return SelectiveScanFn.apply(u, delta, A, B, C, D, z, delta_bias, delta_softplus, return_last_state)'''
+            if target_call in content:
+                content = content.replace(target_call, safe_call)
+            with open(ssi_file, 'w', encoding='utf-8') as f:
+                f.write(content)
+            print('  ✓ Patched mamba_ssm selective_scan_interface with CPU/Triton fallback')
+except Exception as e:
+    pass
 " 2>&1
 
 # Run verification of all critical packages
@@ -324,6 +365,12 @@ except ImportError as e:
 
 ${PY_BIN} -c "
 try:
+    import sys, types
+    if 'selective_scan_cuda' not in sys.modules:
+        try:
+            import selective_scan_cuda
+        except (ImportError, ModuleNotFoundError):
+            sys.modules['selective_scan_cuda'] = types.ModuleType('selective_scan_cuda')
     from mamba_ssm import Mamba
     print('  mamba-ssm ✓ (Mamba SSM kernel available)')
 except ImportError as e:

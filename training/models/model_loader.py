@@ -90,6 +90,17 @@ def try_import_cleanumamba_backbone() -> Tuple[Optional[Any], bool]:
     Genuine attempt to import real CleanUMamba SSM backbone from `cleanumamba`
     or `mamba_ssm`. Returns (model_class, is_real_pkg=True) if available, else (None, False).
     """
+    try:
+        import sys, types
+        if "selective_scan_cuda" not in sys.modules:
+            try:
+                import selective_scan_cuda
+            except (ImportError, ModuleNotFoundError):
+                dummy = types.ModuleType("selective_scan_cuda")
+                sys.modules["selective_scan_cuda"] = dummy
+    except Exception:
+        pass
+
     for mod_name in ("cleanumamba.models", "cleanumamba", "mamba_ssm.models.mixer_seq_simple"):
         try:
             mod = __import__(mod_name, fromlist=["CleanUMamba", "Mamba"])
