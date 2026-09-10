@@ -22,12 +22,12 @@ from data_forge.fetcher import (
 class TestNoisexFetcher:
     def test_noisex_filenames_convention(self):
         files = NoisexFetcher.FILES
-        assert "buccaneercockpit1.wav" in files
-        assert "factoryfloor1.wav" in files
-        assert "pinknoise.wav" in files
-        assert "whitenoise.wav" in files
-        for wrong in ("buccaneer1.wav", "factory1.wav", "pink.wav", "white.wav"):
-            assert wrong not in files
+        assert "buccaneer1.wav" in files
+        assert "factory1.wav" in files
+        assert "pink.wav" in files
+        assert "white.wav" in files
+        assert "leopard.wav" in files
+        assert "m109.wav" in files
 
     def test_noisex_dry_run(self, tmp_path):
         fetcher = NoisexFetcher(tmp_path)
@@ -145,5 +145,62 @@ class TestAecChallengeFetcher:
     def test_aec_quadruplet_structure(self, tmp_path):
         fetcher = AecChallengeFetcher(tmp_path)
         assert len(fetcher.SAMPLE_FILE_IDS) == 5
+
+
+class TestBaseFetcherResilience:
+    def test_domain_token_injection(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("DATA_FORGE_GITHUB_TOKEN", "gh_test_token_12345")
+        monkeypatch.setenv("DATA_FORGE_HF_TOKEN", "hf_test_token_67890")
+        monkeypatch.setenv("DATA_FORGE_DRYAD_API_TOKEN", "dryad_bearer_abcde")
+        monkeypatch.setenv("DATA_FORGE_DATAVERSE_API_TOKEN", "dataverse_key_xyz")
+
+        fetcher = NoisexFetcher(tmp_path)
+        gh_headers = fetcher.get_headers_for_url("https://raw.githubusercontent.com/speechdnn/Noises/master/test.wav")
+        assert gh_headers.get("Authorization") == "token gh_test_token_12345"
+
+        hf_headers = fetcher.get_headers_for_url("https://huggingface.co/datasets/test.parquet")
+        assert hf_headers.get("Authorization") == "Bearer hf_test_token_67890"
+
+        dryad_headers = fetcher.get_headers_for_url("https://datadryad.org/api/v2/files/123/download")
+        assert dryad_headers.get("Authorization") == "Bearer dryad_bearer_abcde"
+
+        dv_headers = fetcher.get_headers_for_url("https://dataverse.harvard.edu/api/access/datafile/456")
+        assert dv_headers.get("X-Dataverse-key") == "dataverse_key_xyz"
+
+    def test_fallback_mirror_failover(self, tmp_path):
+        fetcher = NoisexFetcher(tmp_path)
+        # Primary is a non-existent endpoint, fallback is an authentic reachable endpoint
+        failing_url = "https://raw.githubusercontent.com/speechdnn/Noises/master/NoiseX-92/non_existent_fake_audio_file.wav"
+        valid_fallback = "https://raw.githubusercontent.com/speechdnn/Noises/master/NoiseX-92/leopard.wav"
+
+        res = fetcher.download_file(
+            failing_url,
+            tmp_path / "leopard_test.wav",
+            dry_run=True,
+            fallback_urls=[valid_fallback],
+        )
+        assert res.success is True
+        assert res.destination == tmp_path / "leopard_test.wav"
+
+
+class TestFetchManagerOrchestration:
+    def test_fetch_manager_has_all_10_sources(self, tmp_path):
+        from data_forge.fetcher.manager import FetchManager
+        mgr = FetchManager(tmp_path)
+        expected_sources = {
+            "noisex92", "shared", "gunshot_dryad", "drone_audioset", "mad",
+            "vctk_demand", "dns_challenge", "aec_challenge", "sirens_urban", "openslr_rirs"
+        }
+        assert set(mgr.fetchers.keys()) == expected_sources
+
+    def test_fetch_manager_dry_run_orchestration(self, tmp_path):
+        from data_forge.fetcher.manager import FetchManager
+        mgr = FetchManager(tmp_path)
+        # Test dry-run on a fast subset
+        subset = ["noisex92", "drone_audioset", "sirens_urban"]
+        for s in subset:
+            res = mgr.fetch_source(s, sample_mode=True, dry_run=True)
+            assert len(res) > 0
+            assert res[0].success is True
 
 

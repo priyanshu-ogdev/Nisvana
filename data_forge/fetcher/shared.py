@@ -21,13 +21,33 @@ class SharedExplosionFetcher(BaseFetcher):
     DOWNLOAD_URL = f"https://dataverse.harvard.edu/api/access/datafile/{DATAVERSE_FILE_ID}"
 
     def fetch(self, sample_mode: bool = False, dry_run: bool = False) -> List[DownloadResult]:
+        # Check if WAV files were already extracted or manually placed
+        existing_wavs = list(self.output_dir.glob("**/*.wav"))
+        if existing_wavs and not dry_run:
+            logger.info("Found %d existing SHAReD blast WAV files in %s", len(existing_wavs), self.output_dir)
+            return [DownloadResult(success=True, destination=w, bytes_downloaded=w.stat().st_size, elapsed_sec=0.0, md5="") for w in existing_wavs]
+
         pkl_dest = self.output_dir / "SHAReD.pkl"
-        res = self.download_file(self.DOWNLOAD_URL, pkl_dest, dry_run=dry_run)
+
+        # Check if SHAReD.pkl was manually placed into output directory
+        if pkl_dest.exists() and pkl_dest.stat().st_size > 0 and not dry_run:
+            logger.info("Found manually placed SHAReD.pkl in %s (%.2f MB). Unpacking waveforms...", self.output_dir, pkl_dest.stat().st_size / (1024 * 1024))
+            res = DownloadResult(success=True, destination=pkl_dest, bytes_downloaded=pkl_dest.stat().st_size, elapsed_sec=0.0, md5="")
+        else:
+            res = self.download_file(self.DOWNLOAD_URL, pkl_dest, dry_run=dry_run)
 
         if dry_run or not res.success:
+            if not res.success:
+                logger.info(
+                    "Harvard Dataverse download failed or requires credentials. "
+                    "You can manually download SHAReD.pkl from: %s (or %s) and place it directly into %s",
+                    self.DOWNLOAD_URL,
+                    "https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/ROWODP",
+                    self.output_dir,
+                )
             return [res]
 
-        # If downloaded, extract the waveforms to individual WAV files
+        # If downloaded or manually placed, extract the waveforms to individual WAV files
         extracted_dir = self.output_dir / "wavs"
         extracted_dir.mkdir(parents=True, exist_ok=True)
 

@@ -29,7 +29,7 @@ class GunshotDryadFetcher(BaseFetcher):
         files_to_download = self.FILES[:2] if sample_mode else self.FILES
 
         # Check if files were manually placed into output directory
-        existing_wavs = list(self.output_dir.glob("*.wav"))
+        existing_wavs = list(self.output_dir.glob("**/*.wav"))
         if existing_wavs and not dry_run:
             logger.info("Found %d existing gunshot WAV files in %s", len(existing_wavs), self.output_dir)
             return [DownloadResult(success=True, destination=w, bytes_downloaded=w.stat().st_size, elapsed_sec=0.0, md5="") for w in existing_wavs]
@@ -38,11 +38,12 @@ class GunshotDryadFetcher(BaseFetcher):
             url = f"{self.BASE_API_URL}/{file_id}/download"
             dest = self.output_dir / filename
             res = self.download_file(url, dest, dry_run=dry_run)
-            if not res.success and "401" in (res.error or ""):
+            if not res.success and ("401" in (res.error or "") or "403" in (res.error or "")):
                 logger.info(
-                    "Dryad API requires a free bearer token for downloads. "
-                    "Set DRYAD_API_TOKEN environment variable or place '%s' directly into %s",
+                    "Dryad API requires a bearer token for automated downloads. "
+                    "You can manually download '%s' from %s (or dataset web page: https://datadryad.org/stash/dataset/doi:10.5061/dryad.wm37pvmkc) and place it directly into %s",
                     filename,
+                    url,
                     self.output_dir,
                 )
             results.append(res)

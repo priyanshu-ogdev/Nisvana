@@ -11,17 +11,24 @@ Supports operations for both 4TB server deployment and local test verification:
 """
 
 import argparse
+import json
+import os
 import sys
 from pathlib import Path
 from data_forge.bibliography import export_bibliography_json
 from data_forge.config import (
     AUGMENTED_DIR,
+    BRANCH_AEC,
+    BRANCH_CLASSIFIER,
     BRANCH_SE,
     DATA_DIR,
     ForgeMixingConfig,
     MANIFESTS_DIR,
     PROCESSED_DIR,
     RAW_DIR,
+    SAMPLES_PER_SHARD,
+    SHARDS_DIR,
+    SPLITS_DIR,
 )
 from data_forge.fetcher import FetchManager
 from data_forge.preprocessor import LicenseComplianceMode, PreprocessingPipeline
@@ -29,7 +36,6 @@ from data_forge.augmentor import AugmentationEngine
 from data_forge.mixer import AecBranch, ClassifierBranch, SpeechEnhancementBranch
 from data_forge.verifier import AuditReporter, PipelineAuditor
 from data_forge.exporter import pack_branch_to_shards, write_dataset_card
-from data_forge.config import BRANCH_AEC, BRANCH_CLASSIFIER, SAMPLES_PER_SHARD, SHARDS_DIR
 
 
 def cmd_fetch(args):
