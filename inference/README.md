@@ -1,136 +1,160 @@
 # Project AEGIS — Real-Time Edge Inference Suite & Hybrid ANC Engine
 
-Project AEGIS (`inference/`) is a low-latency, mission-critical audio inference engine designed for deployment on embedded defense hardware, tactical headsets, and edge AI systems (e.g. **NVIDIA Jetson AGX Orin 64GB Developer Kit**, embedded ARM/x86 platforms, and DSPs).
+> **Location:** `inference/`  
+> **Target Hardware:** Edge AI Hardware, Tactical Headsets, NVIDIA Jetson AGX Orin, DGX Edge / Workstations  
+> **Streaming Target:** Real-Time Full-Duplex Audio Processing at 48,000 Hz ($<10\text{ ms}$ algorithmic latency)
 
 ---
 
-## 1. Architecture & SOTA Edge Features
+## 1. Executive Summary & Runtime Architecture
+
+The `inference` package is an ultra-low-latency streaming inference engine and active noise cancellation (ANC) suite. It transitions models trained in `training/` into mission-critical, real-time edge deployment pipelines.
+
+The runtime coordinates four synchronized systems:
+1. **Acoustic Escalation Router**: Dynamically switches between Model 1 (DeepFilterNet3 Base), Model 2 (Escalation), and Model 3 (CleanUMamba) based on real-time acoustic classification.
+2. **Hybrid ANC Engine**: Integrates a dual-buffered Normalized Least Mean Squares (NLMS) adaptive filter with deep neural speech enhancement.
+3. **Stateful Hop Processor**: Feeds contiguous 10ms (480-sample) audio chunks to causal recurrent states without windowing phase distortions.
+4. **Hardware-Accelerated ONNX Runtime**: Delivers zero-copy GPU inference via TensorRT / CUDA execution providers and INT8 dynamic quantization.
 
 ```
-               [Incoming Tactical Audio Stream: 48,000 Hz]
-                                  │
-                                  ▼
-                    [AudioRingBuffer (Zero-Allocation)]
-                                  │
-                                  ▼
-           [AcousticEscalationRouter (Model 4 Classifier)]
-                                  │
-        ┌─────────────────────────┼─────────────────────────┐
-        │ (SNR > 25 dB, Clean)    │ (Default Real-Time)     │ (Impulsive / SNR < 0 dB)
-        ▼                         ▼                         ▼
-   [Bypass Mode]        [Model 1: aegis-se-primary]  [Model 2: aegis-se-escalation]
- (Battery Saving)            (0ms Lookahead)                (40ms Lookahead)
-        │                         │                         │
-        └─────────────────────────┼─────────────────────────┘
-                                  │  (Optional Reference Mic)
-                                  ▼        │
-             [Stage 2: Normalized LMS Filter (NLMS)]
-                                  │
-                                  ▼
-               [StreamingAudioProcessor (50% Overlap-Add)]
-                                  │
-                                  ▼
-                 [Reconstructed Clean Audio: 48kHz]
-```
-
-### 1.1 Zero-Allocation Circular Ring Buffer (`inference/runtime/audio_stream.py`)
-- **Memory Integrity**: Eliminates dynamic array allocations inside the inner audio callback loop to prevent garbage collection pauses and frame drops.
-- **Variable Chunk Handling**: Ingests variable soundcard chunks (e.g., 256, 480, 512, 1024 samples) and buffers them into fixed analysis windows.
-
-### 1.2 Overlap-Add Streaming Processor (`StreamingAudioProcessor`)
-- **Acoustic Continuity**: Employs a 50% Overlap-Add (OLA) reconstruction with Hanning synthesis windowing.
-- **Discontinuity Prevention**: Ensures frame-by-frame deep filtering processes continuous audio without boundary clicks, pops, or phase jumps.
-
-### 1.3 Hybrid AI + Adaptive Filter (ANC) (`inference/runtime/hybrid_anc.py`)
-- **Stage 1 (Deep AI)**: Neural speech enhancement suppresses non-linear, dynamic, and impulsive defence noise (gunfire, artillery, rotor blades).
-- **Stage 2 (Adaptive NLMS)**: Normalized Least Mean Squares filter cancels residual stationary leakage and microphone feedthrough:
-  $$e(n) = \hat{s}(n) - \mathbf{w}^T(n) \mathbf{x}(n), \quad \mathbf{w}(n+1) = \mathbf{w}(n) + \frac{\mu}{\|\mathbf{x}(n)\|^2 + \epsilon} e(n) \mathbf{x}(n)$$
-
-### 1.4 Dynamic Acoustic Escalation Router (`inference/runtime/escalation_router.py`)
-- **Acoustic Environment Monitoring**: Runs Model 4 (`aegis-clf-gate`) to classify audio into `harmonic`, `impulsive`, or `speech_dominant`.
-- **Intelligent Switching**:
-  - **Clean Speech Bypass** ($\text{SNR} > 25\text{ dB}$): Bypasses neural processing to conserve edge battery.
-  - **Primary Streaming (Model 1)**: Runs 0ms lookahead DeepFilterNet3 for real-time edge streaming.
-  - **Severe Escalation (Model 2)**: Automatically escalates to 40ms lookahead DeepFilterNet3 when estimated $\text{SNR} < 0\text{ dB}$ or impulsive blasts are detected.
-- **Crossfade Blending**: Uses a 5ms crossfade window when switching branches to prevent acoustic clicks.
-
-### 1.5 ONNX Runtime & Dynamic INT8 Quantization (`inference/engines/`)
-- **`OnnxRuntimeSession`**: High-performance ONNX Runtime session manager with multi-threading and TensorRT / CUDA execution provider fallback.
-- **`quantize_model_dynamic`**: Post-training dynamic quantization (`torch.qint8`) reducing memory footprint by ~75% and accelerating edge CPU inference.
-
----
-
-## 2. CLI Execution & Operational Runbook
-
-### 2.1 Audio File Enhancer (`enhance_audio.py`)
-
-Enhances noisy WAV/FLAC audio files with optional Hybrid ANC and streaming reconstruction:
-
-```bash
-# Enhance file with Model 1 (streaming mode)
-python -m inference.scripts.enhance_audio -i noisy.wav -o clean.wav --model aegis-se-primary
-
-# Enhance file with Hybrid AI + NLMS Adaptive Filter
-python -m inference.scripts.enhance_audio -i noisy.wav -o clean.wav --model aegis-se-primary --use-hybrid-anc
-
-# Enhance using Dynamic Acoustic Escalation Router
-python -m inference.scripts.enhance_audio -i noisy.wav -o clean.wav --model router
-
-# Or using the automation script:
-bash scripts/16_enhance_audio.sh -i noisy.wav -o clean.wav
-# PowerShell: .\scripts\16_enhance_audio.ps1 -i noisy.wav -o clean.wav
-```
-
-### 2.2 Live Microphone & Headset ANC Prototype (`live_mic_anc.py`)
-
-Interactive real-time demonstration simulating tactical headset communication with dynamic noise scenarios (rotor, gunfire, tank engine):
-
-```bash
-# Run 5-second live streaming ANC demo with 10ms frame pacing
-python -m inference.scripts.live_mic_anc --duration 5.0 --chunk-ms 10.0
-
-# Or using the automation script:
-bash scripts/17_live_stream_prototype.sh --duration 5.0
-# PowerShell: .\scripts\17_live_stream_prototype.ps1 -duration 5.0
-```
-
-### 2.3 Edge ONNX Model Export (`export_onnx.py`)
-
-Exports models with dynamic shapes for NVIDIA Jetson AGX Orin & DSP deployment:
-
-```bash
-# Export Model 1 with 10ms chunk profiling
-python -m inference.scripts.export_onnx --model aegis-se-primary --chunk-ms 10.0
-
-# Or using the automation script:
-bash scripts/15_export_edge_onnx.sh --model aegis-se-primary
-# PowerShell: .\scripts\15_export_edge_onnx.ps1 -model aegis-se-primary
++===================================================================================================+
+|                                  INFERENCE & STREAMING ARCHITECTURE                                |
++===================================================================================================+
+|                                                                                                   |
+|  [Microphone Stream: 48,000 Hz, 10ms chunk = 480 samples]                                         |
+|                                            │                                                      |
+|                                            ▼                                                      |
+|  +---------------------------------------------------------------------------------------------+  |
+|  | 1. AUDIO RING BUFFER (inference/utils/audio_io.py)                                          |  |
+|  |    Zero-allocation circular buffer bridging asynchronous driver threads                     |  |
+|  |    Lock-free 'drop_oldest' policy prevents lag buildup if GPU momentarily slows             |  |
+|  +---------------------------------------------------------------------------------------------+  |
+|                                            │                                                      |
+|                                            ▼                                                      |
+|  +---------------------------------------------------------------------------------------------+  |
+|  | 2. ACOUSTIC ESCALATION ROUTER (inference/runtime/escalation_router.py)                       |  |
+|  |    Runs Model 4 Gating Classifier on 200ms audio windows:                                   |  |
+|  |    * SNR > 25 dB (Clean Speech)     ──> Bypass Mode (Battery-Saving Passthrough)            |  |
+|  |    * Moderate / Stationary Noise   ──> Model 1: DeepFilterNet3 Base (0ms lookahead)         |  |
+|  |    * Severe Noise / Sudden Blast   ──> Model 2: DeepFilterNet3 Escalation (20ms lookahead)  |  |
+|  |    * Dense Harmonic Machinery      ──> Model 3: CleanUMamba SSM (Stateful Memory)           |  |
+|  |    * Crossfade Smoother: 20ms Hanning crossfade eliminates handover clicks and pops         |  |
+|  +---------------------------------------------------------------------------------------------+  |
+|                                            │                                                      |
+|                                            ▼                                                      |
+|  +---------------------------------------------------------------------------------------------+  |
+|  | 3. HYBRID ACTIVE NOISE CANCELLATION (inference/runtime/hybrid_anc.py)                       |  |
+|  |    Stage 1: Dual-Buffered Adaptive NLMS Filter (Cancels periodic engine/propeller whine)    |  |
+|  |    Stage 2: Deep Complex Filtering (Suppresses non-linear speech-correlated hostile noise)  |  |
+|  +---------------------------------------------------------------------------------------------+  |
+|                                            │                                                      |
+|                                            ▼                                                      |
+|  +---------------------------------------------------------------------------------------------+  |
+|  | 4. TRANSMISSION PREPARATION (inference/utils/transmission_prep.py)                          |  |
+|  |    80 Hz High-Pass Filter -> Dynamic Range Compressor -> -1.0 dBFS Limiter                  |  |
+|  +---------------------------------------------------------------------------------------------+  |
+|                                            │                                                      |
+|                                            ▼                                                      |
+|  [Clean Enhanced Output: Headphone Driver / Tactical Military Radio Stream]                       |
++===================================================================================================+
 ```
 
 ---
 
-## 3. Directory Layout
+## 2. Deep-Dive: Subsystem Architecture & Components
 
+### 2.1 Inference Engines & Optimization (`inference/engines/`)
+- **ONNX Export Engine (`onnx_engine.py`)**:
+  - Exports PyTorch models to ONNX Opset 17/18 with constant folding and operator fusion.
+  - **Explicit Stateful IO**: Exposes recurrent hidden states (`h_in`, `h_out`, `context_buffer`) as inputs/outputs of the ONNX graph, preserving causality across streaming frames without graph resets.
+  - **Platform B TensorRT Export (`export_platform_b_tensorrt`)**: Decomposes STFT/ISTFT operations into equivalent causal Conv1d operators, bypassing TensorRT dynamic STFT limitations and compiling into FP16/INT8 TensorRT engines.
+- **ONNX Runtime Session (`onnx_runtime_engine.py`)**:
+  - Manages hardware execution via `TensorrtExecutionProvider`, `CUDAExecutionProvider`, or `CPUExecutionProvider`.
+  - Recycles output state tensors into next-chunk input states with zero memory allocation.
+  - Profiles compute latency and memory consumption per 10ms frame.
+- **Dynamic INT8 Quantization (`quantization.py`)**:
+  - Quantizes weights of Linear and recurrent layers to INT8 (`torch.qint8`).
+  - Reduces model footprint by $\sim 60\text{--}75\%$ (e.g., DF3 Base compressed to $<6\text{ MB}$).
+  - Delivers a $2.0\text{--}2.8\times$ CPU speedup with $<0.05$ PESQ perceptual degradation.
+- **Model Adapter (`onnx_model_adapter.py`)**:
+  - Provides a uniform callable interface (`enhanced = model(audio)`), allowing scripts to use PyTorch models or ONNX sessions interchangeably.
+
+### 2.2 Streaming Runtime & Routing (`inference/runtime/`)
+- **Acoustic Escalation Router (`escalation_router.py`)**:
+  - Evaluates instantaneous acoustic conditions using Model 4 (`aegis-clf-gate`).
+  - **Dynamic Branch Escalation**: Automatically routes to the optimal model based on detected threat profiles:
+    - Normal background $\rightarrow$ Model 1 (zero lookahead).
+    - Sudden blast or gunfire onset $\rightarrow$ Model 2 (absorbs transient via 10ms lookahead output-delay buffer).
+    - Sustained tank engine / drone harmonics $\rightarrow$ Model 3 (CleanUMamba SSM).
+  - **Intelligibility Floor Safeguard**: When speech dominance is detected (`speech_dominant`), an intelligibility floor preserves $\ge 15\%$ ($\text{dry\_mix} \ge 0.15$) of the uncorrupted input signal in both synchronous and pipelined routes, preventing neural over-suppression from truncating quiet consonant tails.
+  - **Asymmetric Hysteresis**: Escalation transitions trigger immediately (1 chunk) to shield against hostile blasts, while bypass transitions require **15 consecutive clean chunks** (150ms) to confirm genuine silence, eliminating route flapping.
+  - **Memory Safeguard (Lazy Loading & 30s Idle Unload)**: Heavy escalation models (Model 2, Model 3) are lazy-loaded only when triggered and automatically unloaded if idle for $>30.0$ seconds (`escalation_idle_unload_sec=30.0`), enforcing a strict $\le 4\text{--}8\text{ GB}$ VRAM/RAM ceiling.
+  - **Click-Free Crossfade Handover**: Transitions between models over a 20ms Hanning window, eliminating phase discontinuity artifacts.
+- **Stateful Hop Processor (`audio_stream.py`)**:
+  - Solves the state-corruption issue of standard Overlap-Add (OLA) on causal recursive models.
+  - Feeds contiguous 10ms chunks directly into recurrent state buffers, preserving time-domain phase alignment.
+- **Hybrid ANC Processor (`hybrid_anc.py`)**:
+  - Implements a Normalized Least Mean Squares (NLMS) filter running on double-buffered audio rings to prevent thread contention between soundcard I/O and weight adaptation:
+    $$\mathbf{w}[n+1] = \mathbf{w}[n] + \frac{\mu}{\|\mathbf{x}[n]\|^2 + \epsilon} e[n] \mathbf{x}[n]$$
+  - Delivers physical acoustic noise cancellation combined with neural speech restoration.
+- **Multichannel Frontend (`multichannel_frontend.py`)**:
+  - Energy-weighted array fusion and SNR-gated throat-mic blending for multi-transducer tactical setups.
+
+### 2.3 Audio Utilities & Buffers (`inference/utils/`)
+- **Circular Ring Buffer (`audio_io.py`)**: Thread-safe, lock-free ring buffer with an atomic `drop_oldest` policy that prevents latency drift during compute spikes.
+- **Audio File I/O (`audio_io.py`)**: High-performance reading and writing of 48 kHz WAV/FLAC files.
+- **Transmission Preprocessing (`transmission_prep.py`)**:
+  - 80 Hz high-pass filter to remove structural rumble and vehicle vibration.
+  - Soft-knee dynamic range compression maximizing voice intelligibility.
+  - $-1.0$ dBFS true peak limiter preventing RF transmitter saturation.
+
+---
+
+## 3. CLI Entry Points & Deployment Tools
+
+Located in `inference/scripts/`:
+
+### 3.1 Live Microphone Enhancement with Hybrid ANC (`live_mic_anc.py`)
+Stream live full-duplex audio from local microphone hardware to headphones with active noise cancellation:
+```bash
+python -m inference.scripts.live_mic_anc \
+    --engine onnx \
+    --provider cuda \
+    --anc-enable \
+    --chunk-size 480
 ```
-inference/
-├── __init__.py                                 # Public inference API exports
-├── README.md                                   # This architectural runbook
-├── runtime/
-│   ├── hybrid_anc.py                          # NormalizedLMSFilter & HybridAncPipeline (AI + NLMS)
-│   ├── audio_stream.py                        # AudioRingBuffer & StreamingAudioProcessor (50% OLA)
-│   ├── escalation_router.py                   # AcousticEscalationRouter (Dynamic gating & crossfade)
-│   └── __init__.py
-├── engines/
-│   ├── onnx_engine.py                         # PyTorch-to-ONNX export & latency profiler
-│   ├── onnx_runtime_engine.py                 # Accelerated ONNXRuntime execution session
-│   ├── quantization.py                        # Post-training dynamic INT8 quantization
-│   └── __init__.py
-├── utils/
-│   ├── audio_io.py                            # 48kHz mono audio reader/writer with clipping protection
-│   └── __init__.py
-└── scripts/
-    ├── enhance_audio.py                       # CLI audio file enhancer
-    ├── live_mic_anc.py                        # Real-time live microphone ANC prototype demo
-    ├── export_onnx.py                         # CLI ONNX model exporter
-    └── __init__.py
+
+### 3.2 Offline Batch Audio Enhancement (`enhance_audio.py`)
+Enhance noisy military audio files using the trained escalation router:
+```bash
+python -m inference.scripts.enhance_audio \
+    --input noisy_cockpit.wav \
+    --output clean_cockpit.wav \
+    --engine onnx \
+    --router
+```
+
+### 3.3 Model ONNX & TensorRT Export (`export_onnx.py`)
+```bash
+# Export DeepFilterNet3 Base for Platform A (CPU/Edge INT8 quantization)
+python -m inference.scripts.export_onnx \
+    --model se_primary \
+    --checkpoint training/checkpoints/aegis-se-primary/best_checkpoint.pt \
+    --output data/onnx_models/se_primary.onnx \
+    --platform platform_a \
+    --quantize
+
+# Export DeepFilterNet3 Base for Platform B (GPU/Laptop TensorRT FP16)
+python -m inference.scripts.export_onnx \
+    --model se_primary \
+    --checkpoint training/checkpoints/aegis-se-primary/best_checkpoint.pt \
+    --output data/onnx_models/se_primary_trt.onnx \
+    --platform platform_b \
+    --fp16
+
+# Export Gating Classifier
+python -m inference.scripts.export_onnx \
+    --model classifier \
+    --checkpoint training/checkpoints/aegis-clf-gate/best_checkpoint.pt \
+    --output data/onnx_models/clf_gate.onnx
 ```

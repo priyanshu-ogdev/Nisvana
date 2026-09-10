@@ -3,8 +3,22 @@ inference/runtime/audio_stream.py — Real-Time Streaming Audio Processor & Ring
 
 Provides:
 - Zero-allocation circular ring buffer for real-time streaming audio
-- Overlap-Add (OLA) streaming processor with Hanning synthesis windowing to
-  eliminate click/pop phase discontinuities across frame boundaries
+- StatefulHopProcessor: the correct streaming pattern for this project's
+  actual models (stateful, causal -- persisted hidden state across calls,
+  per model_loader.py). No windowing, no overlap-add, one hop in / one hop
+  out. USE THIS for anything backed by HybridAncPipeline /
+  AcousticEscalationRouter / model_loader.py's models -- which is
+  everything in this codebase today.
+- StreamingAudioProcessor: Overlap-Add (OLA) with Hanning analysis/synthesis
+  windowing. Correct ONLY for STATELESS, full-context-per-call methods.
+  Using this with a stateful model was a real bug found on review (see
+  StatefulHopProcessor's docstring below for the full analysis: it
+  silently doubled input latency, duplicate-fed every sample through two
+  differently-windowed frames while the model's hidden state kept
+  advancing, and fed the model synthetically edge-tapered audio). Kept
+  available, correctly scoped, for if a genuinely stateless method is ever
+  wired in -- not removed, since it isn't wrong in general, only for the
+  models this project actually uses.
 - Frame accumulator managing fixed chunk sizes from variable soundcard callbacks
 """
 
@@ -12,6 +26,137 @@ from typing import Callable, Optional, Tuple, Union
 import numpy as np
 import torch
 import torch.nn as nn
+
+
+class StatefulHopProcessor:
+    """
+    MERGE-PASS ADDITION: re-applied from an earlier inference-layer review
+    that was not carried into this lineage (confirmed absent via grep
+    before this fix). This is the correct streaming pattern for a
+    genuinely stateful, causal model chain -- which is what this project's
+    models actually are (persisted GRU hidden state, real lookahead-as-
+    output-delay behavior, per model_loader.py). StreamingAudioProcessor
+    below (Hann-window analysis/synthesis with 50% overlap-add) is the
+    RIGHT pattern for stateless, full-context-per-call spectral/masking
+    methods -- it is the WRONG pattern for a stateful model, and was being
+    used that way in inference/scripts/live_mic_anc.py and
+    enhance_audio.py before this fix, which is a real bug, not a style
+    preference:
+
+    1. Latency: OLA needs a full `frame_size` (= 2x hop, in the callers'
+       actual usage) buffered before it can release ANY output, because it
+       must complete one whole analysis window before windowing+overlap-add
+       can be computed. A stateful model needs only ONE hop's worth of new
+       samples per call -- it carries prior context in its hidden state,
+       not in an overlapping window. Wrapping it in OLA was silently
+       DOUBLING the input-side buffering latency this project has spent
+       real effort minimizing.
+
+    2. Correctness: OLA's 50%-overlap means every audio sample is fed to
+       the model TWICE, in two different frames, each time weighted by a
+       different point on the Hann taper, while the model's hidden state
+       advances on every call regardless. A stateful model has no way to
+       know it's seeing duplicated, re-weighted content rather than a
+       clean, once-through, in-order stream -- this corrupts exactly the
+       temporal continuity the statefulness fix (model_loader.py) was
+       added to provide.
+
+    3. Signal quality: the analysis window tapers each frame's input
+       toward zero at both edges before the model ever sees it -- a
+       plausible source of audible warbling/pumping artifacts
+       synchronized to the hop rate, entirely separate from whatever the
+       model's actual enhancement quality is.
+
+    GROUNDED, not just reasoned from first principles: a causal RNN/GRU
+    speech-enhancement model's whole justification for real-time use is
+    exactly this pattern -- "past information can be encoded into the
+    hidden state vector h so that only the input feature at time tau and
+    the state vector from tau-1 are required" (arXiv:2002.05843). And
+    concretely, for the actual model this project is built on: a real,
+    deployed, stateful streaming conversion of DeepFilterNet3 itself
+    (huggingface.co/iky1e/DeepFilterNet3-Streaming-CoreML) states its
+    runtime contract in exactly these terms -- "consumes one 480-sample
+    (10 ms) hop at a time and exposes all recurrent state explicitly."
+
+    ONE FIGURE WORTH FLAGGING, found via that same check: that same real
+    streaming conversion states DeepFilterNet3's actual fixed algorithmic
+    delay as 1,440 samples / 30ms -- not the ~10ms figure (hop-size-only
+    reasoning) used elsewhere in this project's documentation for the
+    zero-lookahead config. Flagged, not silently corrected throughout this
+    project's broader documentation in this pass.
+
+    This class passes consecutive, NON-overlapping hop-sized chunks
+    directly to `enhancement_fn`, unmodified (no windowing in, no
+    overlap-add out) -- correct for a model that maintains its own
+    continuity via persisted internal state.
+    """
+
+    def __init__(
+        self,
+        enhancement_fn: Callable[[np.ndarray], np.ndarray],
+        sample_rate: int = 48000,
+        hop_size: int = 480,   # 10 ms @ 48kHz -- matches DeepFilterNet3's
+                                 # low-latency-config hop; NOT frame_size,
+                                 # since there is no analysis window here
+        reset_fn: Optional[Callable[[], None]] = None,
+    ):
+        self.enhancement_fn = enhancement_fn
+        self.sample_rate = sample_rate
+        self.hop_size = hop_size
+        # Optional callable invoked by reset() -- typically a pipeline's or
+        # router's reset_state(), so starting a new stream via this
+        # processor also clears the model(s)' hidden state in one call.
+        self._reset_fn = reset_fn
+        self.in_ring = AudioRingBuffer(capacity=hop_size * 20)
+
+    def reset(self):
+        """Clears buffered input AND (if a reset_fn was supplied) the
+        backing pipeline/model's hidden state -- call this at the start of
+        every new stream/session, not just when this object is constructed,
+        since a long-lived process may reuse one instance across sessions."""
+        self.in_ring.clear()
+        if self._reset_fn is not None:
+            self._reset_fn()
+
+    def process_chunk(self, incoming_audio: np.ndarray) -> np.ndarray:
+        """
+        Accepts audio of any chunk size, buffers it, and releases enhanced
+        audio in complete hop_size units as they become available -- no
+        windowing, no overlap-add, no frame_size wait. A caller feeding
+        exactly hop_size at a time gets output on every single call.
+        """
+        incoming_audio = np.ascontiguousarray(incoming_audio.squeeze(), dtype=np.float32)
+        self.in_ring.write(incoming_audio)
+
+        output_chunks = []
+        while self.in_ring.size >= self.hop_size:
+            hop = self.in_ring.read(self.hop_size)
+            self.in_ring.consume(self.hop_size)
+
+            enhanced_hop = self.enhancement_fn(hop)
+            enhanced_hop = np.ascontiguousarray(enhanced_hop.squeeze(), dtype=np.float32)
+            if len(enhanced_hop) != self.hop_size:
+                enhanced_hop = np.pad(
+                    enhanced_hop, (0, max(0, self.hop_size - len(enhanced_hop)))
+                )[: self.hop_size]
+            output_chunks.append(enhanced_hop)
+
+        if output_chunks:
+            return np.concatenate(output_chunks)
+        return np.zeros(0, dtype=np.float32)
+
+    def flush(self) -> np.ndarray:
+        """
+        Unlike StreamingAudioProcessor's flush (which releases a windowed
+        overlap tail), a stateful hop processor has no partial-frame
+        residue to release by design -- any leftover samples in the ring
+        buffer are strictly less than one hop and were never enough to run
+        the model on. Returned as silence of that length so callers
+        expecting *some* array back for the stream's final partial chunk
+        don't need special-case handling.
+        """
+        remainder = self.in_ring.size
+        return np.zeros(remainder, dtype=np.float32)
 
 
 class AudioRingBuffer:
