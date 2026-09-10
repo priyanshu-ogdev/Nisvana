@@ -1,0 +1,33 @@
+# models.yaml — AI Model Configuration and Fallback Chain
+#
+# The thermal guard uses this chain in order:
+#   full → harmonic+dfn3+aec  (< 72°C)
+#   tier1 → dfn3+aec only     (72-78°C)
+#   tier2 → cleanumamba+aec   (78-82°C)
+#   tier3 → rnnoise only      (> 82°C)
+
+primary:
+  name: "DeepFilterNet3"
+  path: "models/deepfilternet3.onnx"
+  fft_size: 960
+  hop_size: 480
+  sample_rate: 48000
+  causal: true
+  # If ONNX path doesn't exist, model_loader falls back to next entry
+  fallback: "cleanumamba"
+
+cleanumamba:
+  name: "CleanUMamba"
+  path: "models/cleanumamba.onnx"
+  fallback: "noisereduce"
+
+noisereduce:
+  name: "noisereduce-cpu"
+  path: null                   # pure Python, no file needed
+  fallback: null               # end of chain — passthrough if this fails
+
+# Low-SNR fine-tuned variant (snr_state_fusion.py blends this below -10dB)
+low_snr_variant:
+  name: "DeepFilterNet3-LowSNR"
+  path: "models/deepfilternet3_lowsnr.onnx"
+  blend_threshold_db: -10.0   # below this SNR, weight shifts to this model

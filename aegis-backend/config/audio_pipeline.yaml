@@ -1,0 +1,38 @@
+# audio_pipeline.yaml — DSP Pipeline Configuration
+
+pipeline:
+  sample_rate: 48000           # Hz
+  frame_size: 480              # samples (10ms @ 48kHz)
+  ring_capacity_ms: 500        # ring buffer length in milliseconds
+  dtype: "float32"
+
+lms:
+  mu: 0.05                     # NLMS step size
+  filter_length: 512           # taps (~10.7ms @ 48kHz)
+
+limiter:
+  attack_us: 50                # µs — fast attack for transient safety
+  release_ms: 200              # ms
+  ceiling_dbfs: -1.0           # hard clip ceiling
+  lookahead_ms: 0.75            # ≤0.8ms requirement
+
+fft_exporter:
+  num_bins: 64
+  fps: 30                      # frames per second
+  scale: "log_mel"             # log-mel binning
+
+spl_meter:
+  update_hz: 10
+  weighting: "A"               # A-weighted SPL
+
+harmonic_preproc:
+  enabled: true
+  rotor_min_hz: 20             # minimum rotor BPF to track
+  rotor_max_hz: 800            # maximum rotor harmonic to notch
+  harmonics: 5                 # number of harmonics to notch
+  notch_q: 30                  # Q factor of each notch
+
+aec:
+  enabled: true
+  vad_gate: true               # disable AEC when vad_speech=True
+  crossfade_ms: 5              # crossfade on gate transitions

@@ -1,9 +1,9 @@
 import { useConnectionStore, GLOBAL_STATES, CONNECTION_STATES } from '../state/useConnectionStore';
-import { ShieldCheck, Zap, Radio, AlertTriangle } from 'lucide-react';
+import { ShieldCheck, Zap, Radio, AlertTriangle, RefreshCw } from 'lucide-react';
 import { PersonCard } from './PersonCard';
 
 export function Overlay() {
-  const { globalState, isSimulated, telemetry, clients, sendHandshakeInit } = useConnectionStore();
+  const { globalState, isSimulated, telemetry, clients, sendHandshakeInit, rtt_ms, reconnect } = useConnectionStore();
 
   const getGlobalStatusDisplay = () => {
     if (isSimulated || globalState === GLOBAL_STATES.OFFLINE) {
@@ -25,6 +25,7 @@ export function Overlay() {
   };
   
   const allSecure = clients['person-1']?.state === CONNECTION_STATES.SECURE && clients['person-2']?.state === CONNECTION_STATES.SECURE;
+  const isOffline = isSimulated || globalState === GLOBAL_STATES.OFFLINE;
 
   return (
     <div className="absolute inset-0 pointer-events-none flex flex-col justify-between overflow-hidden">
@@ -35,7 +36,18 @@ export function Overlay() {
           <h1 className="font-heading font-semibold text-lg tracking-wider text-[var(--text-hi)]">PROJECT AEGIS</h1>
         </div>
         
-        <div className="flex items-center space-x-6">
+        <div className="flex items-center space-x-4">
+           {/* F-3: RECONNECT button — only visible when offline */}
+           {isOffline && (
+             <button
+               onClick={() => { reconnect?.(); }}
+               className="pointer-events-auto flex items-center space-x-1.5 px-3 py-1.5 rounded text-xs font-bold tracking-widest uppercase border bg-[var(--amber)]/10 border-[var(--amber)]/30 text-[var(--amber)] hover:bg-[var(--amber)]/20 transition-all"
+             >
+               <RefreshCw size={11} />
+               <span>RECONNECT</span>
+             </button>
+           )}
+
            <button 
              onClick={handleInitHandshake}
              disabled={allSecure}
@@ -60,15 +72,24 @@ export function Overlay() {
          <PersonCard clientId="person-2" side="right" />
       </div>
 
-      {/* TELEMETRY BAR */}
+      {/* TELEMETRY BAR — F-2, F-5, F-6 */}
       <div className="w-full flex justify-center mb-[32px]">
-         <div className="h-[64px] bg-[var(--panel)] backdrop-blur-xl border border-[var(--panel-border)] rounded-2xl flex items-center px-8 space-x-8 shadow-[0_4px_30px_rgba(0,0,0,0.5)]">
-             <TelemetryCell label="LATENCY" value={telemetry.latency_ms ? `${telemetry.latency_ms} ms` : '—'} />
+         <div className="h-[64px] bg-[var(--panel)] backdrop-blur-xl border border-[var(--panel-border)] rounded-2xl flex items-center px-8 space-x-6 shadow-[0_4px_30px_rgba(0,0,0,0.5)]">
+             {/* F-2: RTT always shown when WS connected */}
+             <TelemetryCell label="RTT" value={rtt_ms != null ? `${rtt_ms.toFixed(0)} ms` : '—'} color={rtt_ms != null ? "text-[var(--mint)]" : "text-[var(--text-low)]"} />
              <div className="w-px h-8 bg-white/10" />
-             <TelemetryCell label="SNR IMPROVEMENT" value={telemetry.snr_improvement_db ? `+${telemetry.snr_improvement_db} dB` : '—'} color="text-[var(--mint)]" />
+             <TelemetryCell label="LATENCY" value={telemetry.latency_ms != null ? `${telemetry.latency_ms} ms` : '—'} />
              <div className="w-px h-8 bg-white/10" />
-             <TelemetryCell label="PI TEMP" value={telemetry.pi_cpu_temp ? `${telemetry.pi_cpu_temp.toFixed(1)} °C` : '—'} />
+             <TelemetryCell label="SNR ▲" value={telemetry.snr_improvement_db != null ? `+${telemetry.snr_improvement_db} dB` : '—'} color="text-[var(--mint)]" />
              <div className="w-px h-8 bg-white/10" />
+             <TelemetryCell label="PI TEMP" value={telemetry.pi_cpu_temp != null ? `${telemetry.pi_cpu_temp.toFixed(1)} °C` : '—'} />
+             <div className="w-px h-8 bg-white/10" />
+             {/* F-5: CPU + RAM */}
+             <TelemetryCell label="CPU" value={telemetry.cpu_pct != null ? `${telemetry.cpu_pct.toFixed(0)} %` : '—'} />
+             <div className="w-px h-8 bg-white/10" />
+             <TelemetryCell label="RAM" value={telemetry.ram_pct != null ? `${telemetry.ram_pct.toFixed(0)} %` : '—'} />
+             <div className="w-px h-8 bg-white/10" />
+             {/* F-6: MODEL reads live from telemetry.model */}
              <TelemetryCell label="MODEL" value={telemetry.model || '—'} color="text-[var(--cyan)]" />
          </div>
       </div>
@@ -78,9 +99,9 @@ export function Overlay() {
 
 function TelemetryCell({ label, value, color = "text-[var(--text-hi)]" }) {
   return (
-    <div className="flex flex-col items-center min-w-[120px]">
+    <div className="flex flex-col items-center min-w-[72px]">
       <div className="text-[9px] text-[var(--text-low)] font-bold tracking-[0.2em] mb-1">{label}</div>
-      <div className={`font-mono text-sm ${color}`}>{value}</div>
+      <div className={`font-mono text-xs ${color}`}>{value}</div>
     </div>
   );
 }

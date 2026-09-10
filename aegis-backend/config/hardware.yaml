@@ -1,0 +1,41 @@
+# hardware.yaml — ALSA Device Map
+# Maps physical USB audio cards to logical roles by USB VID:PID.
+# Run `lsusb` on the Pi to find VID:PID for your specific cards.
+# These values are placeholders — update before Pi deployment.
+#
+# Format:
+#   role:
+#     vid_pid: "VVVV:PPPP"        # from lsusb
+#     label: "Human label"         # for logs / hw_status.alsainputs
+#     channel: 0                   # sounddevice channel index
+#     gain_db: 0                   # pre-amp gain stage (dBFS)
+#     mute_gpio: null              # optional GPIO pin for hardware mute
+
+devices:
+  primary_mic:
+    vid_pid: "0d8c:0014"          # Generic USB Audio (C-Media)
+    label: "Primary Mic (USB)"
+    channel: 0
+    gain_db: 0
+    mute_gpio: null
+
+  reference_mic:
+    vid_pid: "0d8c:0012"          # Generic USB Audio #2
+    label: "Reference Mic (USB)"
+    channel: 0
+    gain_db: 0
+    mute_gpio: null
+
+  throat_mic:
+    vid_pid: "0416:a0b5"          # Winbond USB Throat Mic
+    label: "Throat Mic (USB)"
+    channel: 0
+    gain_db: 6                    # throat mics typically need +6dB
+    mute_gpio: null
+
+  headset_output:
+    vid_pid: "0d8c:0008"          # USB Headset Output
+    label: "Headset Output (USB)"
+    channel: 0
+    gain_db: -3
+    mute_gpio: null

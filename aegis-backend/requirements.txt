@@ -1,0 +1,18 @@
+# Core runtime (all platforms)
+websockets>=13.0
+pydantic>=2.7
+numpy>=1.26
+psutil>=5.9
+noisereduce>=3.0
+python-dotenv>=1.0
+pyyaml>=6.0
+scipy>=1.13
+
+# Pi-only (comment out on non-Pi dev machines)
+# sounddevice>=0.4.6
+# soundfile>=0.12
+# onnxruntime>=1.18
+
+# Dev / test
+pytest>=8.2
+pytest-asyncio>=0.24

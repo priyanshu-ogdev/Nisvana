@@ -1,0 +1,21 @@
+[Unit]
+Description=Project AEGIS Edge AI Backend
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/pi/aegis-backend/venv/bin/python -m src.main
+WorkingDirectory=/home/pi/aegis-backend
+Restart=always
+RestartSec=2
+Nice=-10
+CPUSchedulingPolicy=rr
+CPUSchedulingPriority=50
+EnvironmentFile=/home/pi/aegis-backend/.env
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aegis
+
+[Install]
+WantedBy=multi-user.target
