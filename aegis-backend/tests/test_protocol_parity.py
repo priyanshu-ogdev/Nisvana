@@ -16,20 +16,29 @@ from src.ws.protocol import (
 )
 
 
-@pytest.fixture(scope="session")
-def schema_dir(tmp_path_factory):
-    """Export schemas to a temp dir."""
-    d = tmp_path_factory.mktemp("schemas")
-    export_schemas(str(d))
-    return d
-
-
-def test_all_schemas_exported(schema_dir):
-    """All 11 message types must have an exported schema."""
-    expected = list(_MESSAGE_REGISTRY.keys())
-    exported = [f.stem for f in schema_dir.glob("*.json")]
-    for name in expected:
-        assert name in exported, f"Schema not exported for {name}"
+def test_all_schemas_exported():
+    """Ensure every message in _MESSAGE_REGISTRY has a corresponding JSON Schema in the frontend."""
+    import tempfile
+    import json
+    
+    FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "../../frontend/src/ws/schemas")
+    # If the frontend directory doesn't exist, this test should fail because G5 requires it to be committed
+    assert os.path.exists(FRONTEND_DIR), f"Frontend schema directory missing: {FRONTEND_DIR}"
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        export_schemas(tmpdir)
+        
+        for name in _MESSAGE_REGISTRY.keys():
+            tmp_path = os.path.join(tmpdir, f"{name}.json")
+            frontend_path = os.path.join(FRONTEND_DIR, f"{name}.json")
+            
+            assert os.path.exists(frontend_path), f"Schema {name}.json not found in frontend repository"
+            
+            with open(tmp_path) as f_tmp, open(frontend_path) as f_front:
+                tmp_json = json.load(f_tmp)
+                front_json = json.load(f_front)
+                
+            assert tmp_json == front_json, f"Schema mismatch for {name}. Please run 'make schemas' in aegis-backend and commit the changes."
 
 
 def test_fft_stream_has_both_bins():

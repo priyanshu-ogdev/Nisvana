@@ -1,0 +1,41 @@
+{
+  "description": "Response to HandshakeInit \u2014 ok or denied.",
+  "properties": {
+    "type": {
+      "const": "handshake_ack",
+      "default": "handshake_ack",
+      "title": "Type",
+      "type": "string"
+    },
+    "clientId": {
+      "title": "Clientid",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "ok",
+        "denied"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reason"
+    }
+  },
+  "required": [
+    "clientId",
+    "status"
+  ],
+  "title": "HandshakeAck",
+  "type": "object"
+}

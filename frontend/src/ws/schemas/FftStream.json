@@ -1,0 +1,52 @@
+{
+  "description": "30fps spectral data.",
+  "properties": {
+    "type": {
+      "const": "fft_stream",
+      "default": "fft_stream",
+      "title": "Type",
+      "type": "string"
+    },
+    "clientId": {
+      "title": "Clientid",
+      "type": "string"
+    },
+    "bins": {
+      "description": "Enhanced output bins [0-255]",
+      "items": {
+        "type": "integer"
+      },
+      "maxItems": 64,
+      "minItems": 64,
+      "title": "Bins",
+      "type": "array"
+    },
+    "raw_bins": {
+      "description": "Raw input bins [0-255]",
+      "items": {
+        "type": "integer"
+      },
+      "maxItems": 64,
+      "minItems": 64,
+      "title": "Raw Bins",
+      "type": "array"
+    },
+    "sampleRate": {
+      "title": "Samplerate",
+      "type": "integer"
+    },
+    "ts": {
+      "title": "Ts",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "clientId",
+    "bins",
+    "raw_bins",
+    "sampleRate",
+    "ts"
+  ],
+  "title": "FftStream",
+  "type": "object"
+}

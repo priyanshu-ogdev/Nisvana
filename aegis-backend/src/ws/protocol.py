@@ -78,32 +78,26 @@ class HandshakeAck(BaseModel):
 
 
 class HwStatus(BaseModel):
-    """Hardware presence and health broadcast. Sent on connect + on device change."""
+    """Broadcast when ALSA state changes or on connection."""
     type: Literal["hw_status"] = "hw_status"
     headset_detected: bool
     mic_primary: bool
     mic_reference: bool
     mic_throat: bool
-    pi_cpu_temp: float = Field(..., description="°C from vcgencmd")
-    ai_model_loaded: str = Field(..., description="Model name or 'none'")
-    alsainputs: List[str] = Field(default_factory=list, description="ALSA input card labels")
-    alsaoutputs: List[str] = Field(default_factory=list, description="ALSA output card labels")
+    pi_cpu_temp: Optional[float] = None
+    ai_model_loaded: Optional[str] = None
+    alsainputs: list[str] = Field(default_factory=list)
+    alsaoutputs: list[str] = Field(default_factory=list)
 
 
 class FftStream(BaseModel):
-    """
-    64-bin FFT data for one client, at 30fps.
-    Both raw input and enhanced output bins are sent simultaneously.
-    Frontend toggles which stream to display on user click.
-    """
+    """30fps spectral data."""
     type: Literal["fft_stream"] = "fft_stream"
     clientId: str
-    bins: List[int] = Field(..., min_length=64, max_length=64,
-                             description="Enhanced output bins [0-255]")
-    raw_bins: List[int] = Field(..., min_length=64, max_length=64,
-                                 description="Raw input bins [0-255]")
-    sampleRate: int = Field(48000, description="Hz")
-    ts: int = Field(..., description="Unix ms of frame capture")
+    bins: list[int] = Field(..., min_length=64, max_length=64, description="Enhanced output bins [0-255]")
+    raw_bins: list[int] = Field(..., min_length=64, max_length=64, description="Raw input bins [0-255]")
+    sampleRate: int
+    ts: int
 
 
 class AncState(BaseModel):
@@ -128,6 +122,9 @@ class Telemetry(BaseModel):
     cpu_pct: float = Field(..., description="Pi CPU usage 0–100")
     ram_pct: float = Field(..., description="Pi RAM usage 0–100")
     pi_cpu_temp: Optional[float] = Field(None, description="°C, duplicated for convenience")
+    aec_active: Optional[bool] = None
+    snr_state: Optional[str] = None
+    blend_weight: Optional[float] = None
 
 
 class LinkStatus(BaseModel):

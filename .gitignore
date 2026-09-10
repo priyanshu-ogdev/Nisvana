@@ -68,7 +68,6 @@ Thumbs.db
 aegis-backend/venv/
 aegis-backend/.env
 aegis-backend/models/
-aegis-backend/frontend_schemas/
 aegis-backend/__pycache__/
 aegis-backend/**/__pycache__/
 aegis-backend/.pytest_cache/

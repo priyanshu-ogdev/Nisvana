@@ -1,0 +1,73 @@
+{
+  "description": "Broadcast when ALSA state changes or on connection.",
+  "properties": {
+    "type": {
+      "const": "hw_status",
+      "default": "hw_status",
+      "title": "Type",
+      "type": "string"
+    },
+    "headset_detected": {
+      "title": "Headset Detected",
+      "type": "boolean"
+    },
+    "mic_primary": {
+      "title": "Mic Primary",
+      "type": "boolean"
+    },
+    "mic_reference": {
+      "title": "Mic Reference",
+      "type": "boolean"
+    },
+    "mic_throat": {
+      "title": "Mic Throat",
+      "type": "boolean"
+    },
+    "pi_cpu_temp": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pi Cpu Temp"
+    },
+    "ai_model_loaded": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ai Model Loaded"
+    },
+    "alsainputs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Alsainputs",
+      "type": "array"
+    },
+    "alsaoutputs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Alsaoutputs",
+      "type": "array"
+    }
+  },
+  "required": [
+    "headset_detected",
+    "mic_primary",
+    "mic_reference",
+    "mic_throat"
+  ],
+  "title": "HwStatus",
+  "type": "object"
+}

@@ -59,28 +59,3 @@ class DeepFilterNet3:
             return frame
 
 
-class SnrStateFusion:
-    """
-    Blend two model checkpoints based on RNNoise SNR state.
-    Below -10dB: weight shifts 100% to low-SNR fine-tuned variant.
-    """
-
-    def __init__(
-        self,
-        standard_model: DeepFilterNet3,
-        low_snr_model: DeepFilterNet3 | None,
-        blend_threshold_db: float = -10.0,
-    ) -> None:
-        self._standard = standard_model
-        self._low_snr = low_snr_model
-        self._threshold = blend_threshold_db
-
-    def process_frame(self, frame: np.ndarray, snr_db: float) -> np.ndarray:
-        if self._low_snr is None or snr_db > self._threshold:
-            return self._standard.process_frame(frame)
-
-        # Blend: below threshold shift weight toward low-SNR variant
-        alpha = min(1.0, (self._threshold - snr_db) / 10.0)  # 0→1 over 10dB
-        out_std = self._standard.process_frame(frame)
-        out_lsnr = self._low_snr.process_frame(frame)
-        return ((1 - alpha) * out_std + alpha * out_lsnr).astype(np.float32)

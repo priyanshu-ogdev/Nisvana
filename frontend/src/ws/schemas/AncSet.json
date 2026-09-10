@@ -1,0 +1,26 @@
+{
+  "description": "Enable or disable ANC for a client.",
+  "properties": {
+    "type": {
+      "const": "anc_set",
+      "title": "Type",
+      "type": "string"
+    },
+    "clientId": {
+      "pattern": "^person-[12]$",
+      "title": "Clientid",
+      "type": "string"
+    },
+    "enabled": {
+      "title": "Enabled",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "type",
+    "clientId",
+    "enabled"
+  ],
+  "title": "AncSet",
+  "type": "object"
+}

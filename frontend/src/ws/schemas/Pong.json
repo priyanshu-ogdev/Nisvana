@@ -1,0 +1,32 @@
+{
+  "description": "Response to Ping with RTT measurement.",
+  "properties": {
+    "type": {
+      "const": "pong",
+      "default": "pong",
+      "title": "Type",
+      "type": "string"
+    },
+    "seq": {
+      "title": "Seq",
+      "type": "integer"
+    },
+    "ts": {
+      "description": "Unix ms at time of pong send",
+      "title": "Ts",
+      "type": "integer"
+    },
+    "rtt_ms": {
+      "description": "Measured round-trip time ms",
+      "title": "Rtt Ms",
+      "type": "number"
+    }
+  },
+  "required": [
+    "seq",
+    "ts",
+    "rtt_ms"
+  ],
+  "title": "Pong",
+  "type": "object"
+}

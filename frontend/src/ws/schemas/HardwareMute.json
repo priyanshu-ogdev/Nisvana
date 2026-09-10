@@ -1,0 +1,38 @@
+{
+  "description": "Mute or unmute a specific audio channel on the hardware.",
+  "properties": {
+    "type": {
+      "const": "hardware_mute",
+      "title": "Type",
+      "type": "string"
+    },
+    "clientId": {
+      "pattern": "^person-[12]$",
+      "title": "Clientid",
+      "type": "string"
+    },
+    "target": {
+      "enum": [
+        "primary_mic",
+        "reference_mic",
+        "throat_mic",
+        "headset_output"
+      ],
+      "title": "Target",
+      "type": "string"
+    },
+    "state": {
+      "description": "True = muted",
+      "title": "State",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "type",
+    "clientId",
+    "target",
+    "state"
+  ],
+  "title": "HardwareMute",
+  "type": "object"
+}

@@ -1,0 +1,48 @@
+{
+  "description": "ANC pipeline state, broadcast at 10Hz per secure client.",
+  "properties": {
+    "type": {
+      "const": "anc_state",
+      "default": "anc_state",
+      "title": "Type",
+      "type": "string"
+    },
+    "clientId": {
+      "title": "Clientid",
+      "type": "string"
+    },
+    "anc_active": {
+      "title": "Anc Active",
+      "type": "boolean"
+    },
+    "vad_speech": {
+      "description": "True when voice detected (AEC gated)",
+      "title": "Vad Speech",
+      "type": "boolean"
+    },
+    "ambient_out_db": {
+      "description": "Primary mic RMS\u2192dBFS A-weighted",
+      "title": "Ambient Out Db",
+      "type": "number"
+    },
+    "ambient_in_ear_db": {
+      "description": "Post-limiter in-ear dBFS",
+      "title": "Ambient In Ear Db",
+      "type": "number"
+    },
+    "sidetone_on": {
+      "title": "Sidetone On",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "clientId",
+    "anc_active",
+    "vad_speech",
+    "ambient_out_db",
+    "ambient_in_ear_db",
+    "sidetone_on"
+  ],
+  "title": "AncState",
+  "type": "object"
+}

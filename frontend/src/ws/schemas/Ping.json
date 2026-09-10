@@ -1,0 +1,26 @@
+{
+  "description": "Heartbeat from frontend, expects Pong reply.",
+  "properties": {
+    "type": {
+      "const": "ping",
+      "title": "Type",
+      "type": "string"
+    },
+    "seq": {
+      "title": "Seq",
+      "type": "integer"
+    },
+    "timestamp": {
+      "description": "Unix ms",
+      "title": "Timestamp",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "type",
+    "seq",
+    "timestamp"
+  ],
+  "title": "Ping",
+  "type": "object"
+}

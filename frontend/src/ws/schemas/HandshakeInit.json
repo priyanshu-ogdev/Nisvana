@@ -1,0 +1,27 @@
+{
+  "description": "Frontend requests a secure link for a given client slot.",
+  "properties": {
+    "type": {
+      "const": "handshake_init",
+      "title": "Type",
+      "type": "string"
+    },
+    "clientId": {
+      "pattern": "^person-[12]$",
+      "title": "Clientid",
+      "type": "string"
+    },
+    "timestamp": {
+      "description": "Unix ms from frontend clock",
+      "title": "Timestamp",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "type",
+    "clientId",
+    "timestamp"
+  ],
+  "title": "HandshakeInit",
+  "type": "object"
+}

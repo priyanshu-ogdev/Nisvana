@@ -29,7 +29,9 @@ from .audio.rnnoise_vad import RNNoiseVAD
 from .audio.harmonic_preproc import HarmonicPreprocessor
 from .audio.limiter import PeakLimiter
 from .audio.ringbuffer import SpscRingBuffer
-from .ai.deepfilternet3 import DeepFilterNet3, SnrStateFusion
+from .audio.aec import GatedAEC
+from .ai.deepfilternet3 import DeepFilterNet3
+from .ai.snr_state_fusion import SnrStateFusion
 from .ai.model_loader import ModelLoader
 from .dsp.fft_exporter import FftExporter
 from .dsp.spl_meter import SplMeter
@@ -72,6 +74,10 @@ class Orchestrator:
             "person-1": PeakLimiter(SAMPLE_RATE),
             "person-2": PeakLimiter(SAMPLE_RATE),
         }
+        self._aec: dict[str, GatedAEC] = {
+            "person-1": GatedAEC(SAMPLE_RATE, FRAME_SIZE),
+            "person-2": GatedAEC(SAMPLE_RATE, FRAME_SIZE),
+        }
 
         # FFT, SPL, telemetry
         self._fft = FftExporter(sample_rate=SAMPLE_RATE)
@@ -84,7 +90,7 @@ class Orchestrator:
         # AI model
         self._model_loader = ModelLoader()
         self._model_name = "none"
-        self._model: Optional[DeepFilterNet3] = None
+        self._fusion: Optional[SnrStateFusion] = None
 
         # Ring buffers (filled by ALSA thread, read by DSP loop)
         self._rings: dict[str, SpscRingBuffer] = {
@@ -112,11 +118,15 @@ class Orchestrator:
         else:
             model_key = "noisereduce"
         self._model_name = self._model_loader.swap_model(model_key)
-        self._model = DeepFilterNet3(self._model_loader.get_session(), SAMPLE_RATE)
+        std_model = DeepFilterNet3(self._model_loader.get_session(), SAMPLE_RATE)
+        # Note: In a real environment, we would also swap/load the low-SNR checkpoint if applicable.
+        # For the prototype, we fall back to a single model.
+        self._fusion = SnrStateFusion(std_model, None, SAMPLE_RATE, FRAME_SIZE)
 
     def load_model(self) -> None:
         self._model_name = self._model_loader.load()
-        self._model = DeepFilterNet3(self._model_loader.get_session(), SAMPLE_RATE)
+        std_model = DeepFilterNet3(self._model_loader.get_session(), SAMPLE_RATE)
+        self._fusion = SnrStateFusion(std_model, None, SAMPLE_RATE, FRAME_SIZE)
         logger.info(f"Loaded model: {self._model_name}")
 
     def _generate_synthetic_frame(self, client_id: str, t: float) -> tuple[np.ndarray, np.ndarray]:
@@ -189,16 +199,20 @@ class Orchestrator:
                 else:
                     after_harmonic = after_lms
 
-                # 4. AI model inference
-                if self._model:
-                    enhanced = self._model.process_frame(after_harmonic)
+                # 4. AI model inference (via SNR State Fusion)
+                if self._fusion:
+                    enhanced = self._fusion.process_frame(after_harmonic, vad_result["snr_state"])
                 else:
                     enhanced = after_harmonic
 
+                # 4.5. Gated AEC
+                after_aec = self._aec[client_id].process_frame(enhanced, raw_reference, vad_result["vad_speech"])
+
                 # 5. Limiter (safety-critical — always runs)
-                limited = self._limiter[client_id].process_frame(enhanced)
+                limited = self._limiter[client_id].process_frame(after_aec)
 
                 # 6. Record for telemetry
+                # Note: passing self._aec[client_id].is_active into collect() happens at 1Hz
                 self._telemetry.record_frame(raw_primary, limited)
 
                 # 7. SPL readings
@@ -244,6 +258,10 @@ class Orchestrator:
             if now - last_telemetry_emit >= 1.0 / TELEMETRY_RATE:
                 last_telemetry_emit = now
                 tel = self._telemetry.collect(self._model_name)
+                tel["aec_active"] = any(self._aec[c].is_active for c in ["person-1", "person-2"])
+                if self._fusion:
+                    tel["snr_state"] = self._fusion.snr_state
+                    tel["blend_weight"] = self._fusion.blend_weight
                 tel_msg = Telemetry(**tel)
                 self._server.push_telemetry(tel_msg.model_dump_json())
 

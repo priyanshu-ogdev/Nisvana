@@ -1,0 +1,31 @@
+{
+  "description": "State machine event for a specific client link.",
+  "properties": {
+    "type": {
+      "const": "link_status",
+      "default": "link_status",
+      "title": "Type",
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "handshaking",
+        "link_secure",
+        "streaming",
+        "dropped"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "clientId": {
+      "title": "Clientid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "state",
+    "clientId"
+  ],
+  "title": "LinkStatus",
+  "type": "object"
+}

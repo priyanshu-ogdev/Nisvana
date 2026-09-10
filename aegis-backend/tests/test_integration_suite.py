@@ -237,6 +237,8 @@ def test_09_anc_speech_passthrough():
 def test_10_fft_stream_dual_view():
     """FftStream must carry both raw_bins and bins; both must be 64 elements."""
     from src.ws.protocol import FftStream
+    import time
+    import json
 
     msg = FftStream(
         clientId="person-1",
@@ -250,3 +252,120 @@ def test_10_fft_stream_dual_view():
     assert "raw_bins" in dumped and len(dumped["raw_bins"]) == 64
     assert dumped["bins"] != dumped["raw_bins"], "Streams should differ (enhanced ≠ raw)"
     print("✅ test_10: Dual-stream FFT payload correct")
+
+
+# ===========================================================================
+# test_11 — AEC gating (v16 core)
+# ===========================================================================
+
+def test_11_aec_gating():
+    """AEC fades in when vad_speech=False, bypasses when vad_speech=True."""
+    import numpy as np
+    from src.audio.aec import GatedAEC
+
+    aec = GatedAEC(sample_rate=48000, frame_size=480)
+    primary = np.ones(480, dtype=np.float32)
+    reference = np.ones(480, dtype=np.float32)
+
+    # Initially inactive
+    assert not aec.is_active
+
+    # Process non-speech for a few frames
+    for _ in range(5):
+        out = aec.process_frame(primary, reference, vad_speech=False)
+    
+    assert aec.is_active, "AEC should become active during non-speech"
+
+    # Process speech for a few frames
+    for _ in range(5):
+        out = aec.process_frame(primary, reference, vad_speech=True)
+    
+    assert not aec.is_active, "AEC should bypass during speech"
+    print("✅ test_11: AEC gating crossfade correct")
+
+
+# ===========================================================================
+# test_12 — SNR-state model fusion
+# ===========================================================================
+
+def test_12_fusion():
+    """Fusion module correctly smooths weights based on SNR state."""
+    import numpy as np
+    from src.ai.snr_state_fusion import SnrStateFusion
+    
+    class MockModel:
+        def process_frame(self, frame):
+            return frame
+
+    # Standard model only (graceful degrade test)
+    fusion = SnrStateFusion(MockModel(), None)
+    
+    # State severe
+    for _ in range(15):
+        fusion.process_frame(np.zeros(480, dtype=np.float32), "severe")
+    
+    assert fusion.snr_state == "severe"
+    # Even if target is 1.0, because low_snr_model is None, it degrades to 0.0
+    assert fusion.blend_weight == 0.0
+
+    # With low_snr model
+    fusion_full = SnrStateFusion(MockModel(), MockModel())
+    for _ in range(15):
+        fusion_full.process_frame(np.zeros(480, dtype=np.float32), "severe")
+    assert fusion_full.blend_weight == 1.0, f"Weight should hit 1.0, got {fusion_full.blend_weight}"
+
+    print("✅ test_12: SNR state fusion correct")
+
+
+# ===========================================================================
+# test_13 — Day-1 Export (G4)
+# ===========================================================================
+
+def test_13_export():
+    """Verify export_report.md exists and names an active inference path."""
+    import os
+    report_path = os.path.join(os.path.dirname(__file__), "..", "models", "export_report.md")
+    assert os.path.exists(report_path), "export_report.md is missing"
+    
+    with open(report_path, "r") as f:
+        content = f.read().lower()
+    
+    assert "aten::stft" in content, "Must record aten::stft export failure"
+    assert "active inference path" in content, "Must name the active inference path"
+    print("✅ test_13: Export report validated")
+
+
+# ===========================================================================
+# test_14 — Validation gate dry run
+# ===========================================================================
+
+def test_14_gate_dryrun():
+    """Run validation script and ensure report schema and headers are correct."""
+    import subprocess
+    import tempfile
+    import os
+
+    with tempfile.TemporaryDirectory() as d:
+        # Mock test-set dir
+        test_set = os.path.join(d, "test_set")
+        os.makedirs(test_set)
+        out_csv = os.path.join(d, "report.csv")
+
+        # Run the script
+        result = subprocess.run(
+            [sys.executable, "-m", "src.validation.run_gate", "--test-set", test_set, "--out", out_csv],
+            capture_output=True, text=True
+        )
+        assert result.returncode == 0, f"run_gate failed: {result.stderr}"
+        
+        assert os.path.exists(out_csv)
+        with open(out_csv) as f:
+            lines = f.readlines()
+        
+        # Check header
+        assert "PESQ/STOI validated on telecom-style degradations" in lines[0]
+        assert "Class,SNR_Bin,PESQ,STOI,SNR_Absolute,SNR_Improvement,Segmental_SNR,Recoverability" in lines[1]
+        
+        # Check rows
+        assert len(lines) > 2, "No rows written"
+    print("✅ test_14: Validation gate dry run correct")

@@ -1,0 +1,106 @@
+{
+  "description": "System performance telemetry, broadcast at 1Hz.",
+  "properties": {
+    "type": {
+      "const": "telemetry",
+      "default": "telemetry",
+      "title": "Type",
+      "type": "string"
+    },
+    "latency_ms": {
+      "description": "End-to-end pipeline latency ms",
+      "title": "Latency Ms",
+      "type": "number"
+    },
+    "snr_improvement_db": {
+      "description": "Estimated SNR delta dB",
+      "title": "Snr Improvement Db",
+      "type": "number"
+    },
+    "model": {
+      "description": "Currently active AI model name",
+      "title": "Model",
+      "type": "string"
+    },
+    "platform": {
+      "const": "pi5",
+      "default": "pi5",
+      "title": "Platform",
+      "type": "string"
+    },
+    "fps": {
+      "description": "Audio pipeline frames/sec",
+      "title": "Fps",
+      "type": "number"
+    },
+    "cpu_pct": {
+      "description": "Pi CPU usage 0\u2013100",
+      "title": "Cpu Pct",
+      "type": "number"
+    },
+    "ram_pct": {
+      "description": "Pi RAM usage 0\u2013100",
+      "title": "Ram Pct",
+      "type": "number"
+    },
+    "pi_cpu_temp": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "\u00b0C, duplicated for convenience",
+      "title": "Pi Cpu Temp"
+    },
+    "aec_active": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Aec Active"
+    },
+    "snr_state": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Snr State"
+    },
+    "blend_weight": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Blend Weight"
+    }
+  },
+  "required": [
+    "latency_ms",
+    "snr_improvement_db",
+    "model",
+    "fps",
+    "cpu_pct",
+    "ram_pct"
+  ],
+  "title": "Telemetry",
+  "type": "object"
+}
