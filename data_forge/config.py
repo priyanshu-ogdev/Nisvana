@@ -16,13 +16,22 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _load_dotenv() -> None:
-    """Loads environment variables from .env if present."""
+    """Loads environment variables from all discovered .env files if present."""
     search_paths = [
-        Path.cwd() / ".env",
         REPO_ROOT / ".env",
         Path(__file__).resolve().parent / ".env",
+        Path.cwd() / ".env",
     ]
+    seen = set()
     for env_file in search_paths:
+        try:
+            resolved = env_file.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+        except Exception:
+            pass
+
         if env_file.is_file():
             try:
                 with open(env_file, "r", encoding="utf-8") as f:
@@ -35,17 +44,23 @@ def _load_dotenv() -> None:
                         val = val.strip()
                         if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
                             val = val[1:-1]
-                        if key not in os.environ:
-                            os.environ[key] = val
+                        # Don't let placeholders override real values
+                        current_val = os.environ.get(key, "")
+                        is_placeholder = not current_val or current_val.startswith("your_")
+                        if key not in os.environ or is_placeholder:
+                            if val and not val.startswith("your_"):
+                                os.environ[key] = val
+                            elif key not in os.environ:
+                                os.environ[key] = val
             except Exception:
                 pass
-            break
 
 
 _load_dotenv()
 
 
 # Optional API Credentials
+KAGGLE_ACCESS_TOKEN = os.environ.get("KAGGLE_ACCESS_TOKEN", os.environ.get("KAGGLE_API_TOKEN", ""))
 KAGGLE_USERNAME = os.environ.get("KAGGLE_USERNAME", "")
 KAGGLE_KEY = os.environ.get("KAGGLE_KEY", "")
 DRYAD_API_TOKEN = os.environ.get("DRYAD_API_TOKEN", "")

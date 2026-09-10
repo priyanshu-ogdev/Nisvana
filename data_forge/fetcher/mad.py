@@ -27,7 +27,8 @@ class MadFetcher(BaseFetcher):
     """
     Fetches the Military Audio Dataset (MAD): annotation/code from GitHub,
     and the actual audio archive (8,075 samples, ~12h, 7 classes, native 48kHz
-    mono per the dataset's own Kaggle metadata) via the Kaggle API.
+    mono per the dataset's own Kaggle metadata) via Kaggle API / direct HTTP streaming.
+    Supports KAGGLE_ACCESS_TOKEN (Bearer), KAGGLE_USERNAME/KEY (Basic), and ~/.kaggle/kaggle.json.
     """
 
     BASE_RAW_URL = "https://raw.githubusercontent.com/kaen2891/military_audio_dataset/main"
@@ -39,6 +40,7 @@ class MadFetcher(BaseFetcher):
     ]
 
     KAGGLE_DATASET_SLUG = "junewookim/mad-dataset-military-audio-dataset"
+    KAGGLE_API_URL = "https://www.kaggle.com/api/v1/datasets/download/junewookim/mad-dataset-military-audio-dataset"
 
     def fetch(self, sample_mode: bool = False, dry_run: bool = False) -> List[DownloadResult]:
         results: List[DownloadResult] = []
@@ -60,26 +62,6 @@ class MadFetcher(BaseFetcher):
     def _fetch_from_kaggle(self, dry_run: bool, sample_mode: bool) -> DownloadResult:
         dest_zip = self.output_dir / "mad_dataset_kaggle.zip"
 
-        if dry_run:
-            logger.info(
-                "[DRY RUN] MAD audio archive is served via the Kaggle API (dataset: %s), "
-                "not a directly probable HTTPS URL. Verifying Kaggle credentials and API "
-                "reachability instead of an HTTP HEAD probe.",
-                self.KAGGLE_DATASET_SLUG,
-            )
-            has_creds = self._kaggle_credentials_present()
-            return DownloadResult(
-                success=has_creds,
-                destination=dest_zip,
-                bytes_downloaded=0,
-                elapsed_sec=0.0,
-                md5="",
-                error=None if has_creds else (
-                    "No Kaggle credentials found (set KAGGLE_USERNAME + KAGGLE_KEY env vars, "
-                    "or place ~/.kaggle/kaggle.json). Required to fetch the real MAD audio archive."
-                ),
-            )
-
         # Check if files were manually placed into output directory
         existing_wavs = list(self.output_dir.glob("**/*.wav"))
         if existing_wavs and not dry_run:
@@ -95,45 +77,55 @@ class MadFetcher(BaseFetcher):
         if not self._kaggle_credentials_present():
             msg = (
                 "Kaggle credentials not configured. The MAD audio archive (~1.1GB, 8,075 clips) "
-                "is hosted on Kaggle, not GitHub, and requires a free Kaggle account + API token. "
-                "Set KAGGLE_USERNAME and KAGGLE_KEY environment variables (from "
-                "https://www.kaggle.com/settings -> API -> Create New Token), or place the "
-                "downloaded kaggle.json at ~/.kaggle/kaggle.json, then re-run this fetcher. "
+                "is hosted on Kaggle, not GitHub, and requires Kaggle API credentials. "
+                "Set KAGGLE_ACCESS_TOKEN in your .env (recommended, from "
+                "https://www.kaggle.com/settings -> API -> Create New Token), or set "
+                "KAGGLE_USERNAME and KAGGLE_KEY, or place ~/.kaggle/kaggle.json, then re-run this fetcher. "
                 "Only the annotation CSV and README were fetched from GitHub this run."
             )
+            if dry_run:
+                return DownloadResult(success=False, destination=dest_zip, bytes_downloaded=0, elapsed_sec=0.0, md5="", error=msg)
             logger.warning(msg)
             return DownloadResult(success=False, destination=dest_zip, bytes_downloaded=0, elapsed_sec=0.0, md5="", error=msg)
 
-        try:
-            # Imported lazily: kaggle's client reads credentials from env/file at import time,
-            # so this must happen only after we've confirmed credentials exist above.
-            import kaggle  # type: ignore
-
-            logger.info("Authenticating with Kaggle API and downloading dataset '%s'...", self.KAGGLE_DATASET_SLUG)
-            kaggle.api.authenticate()
-            kaggle.api.dataset_download_files(
+        if dry_run:
+            logger.info(
+                "[DRY RUN] Probing MAD audio archive via Kaggle API (%s)...",
                 self.KAGGLE_DATASET_SLUG,
-                path=str(self.output_dir),
-                unzip=False,
-                quiet=False,
             )
-            downloaded = list(self.output_dir.glob("*.zip"))
-            if not downloaded:
-                raise RuntimeError("Kaggle API reported success but no .zip archive was found in the output directory.")
-            archive = downloaded[0]
+            return self.download_file(self.KAGGLE_API_URL, dest_zip, dry_run=True)
 
-            if not dry_run:
-                extract_target = self.output_dir / "audio"
-                if not extract_target.exists():
-                    logger.info("Extracting MAD audio archive...")
-                    with zipfile.ZipFile(archive, "r") as z:
-                        members = z.namelist()
-                        if sample_mode:
-                            members = [m for m in members if m.lower().endswith(".wav")][:25]
-                        z.extractall(extract_target, members=members)
+        try:
+            # Check if archive already downloaded and intact
+            if dest_zip.exists() and dest_zip.stat().st_size > 100_000_000:
+                logger.info("MAD audio archive %s already exists (%.2f MB).", dest_zip.name, dest_zip.stat().st_size / (1024 * 1024))
+                dl_result = DownloadResult(
+                    success=True,
+                    destination=dest_zip,
+                    bytes_downloaded=dest_zip.stat().st_size,
+                    elapsed_sec=0.0,
+                    md5=self.compute_md5(dest_zip),
+                )
+            else:
+                logger.info("Downloading MAD audio archive from Kaggle (%s)...", self.KAGGLE_API_URL)
+                dl_result = self.download_file(self.KAGGLE_API_URL, dest_zip, dry_run=False)
+                if not dl_result.success:
+                    return dl_result
 
-            size = archive.stat().st_size
-            return DownloadResult(success=True, destination=archive, bytes_downloaded=size, elapsed_sec=0.0, md5=self.compute_md5(archive))
+            # Extract audio clips
+            extract_target = self.output_dir / "audio"
+            extract_target.mkdir(parents=True, exist_ok=True)
+            existing_clips = list(extract_target.glob("*.wav"))
+            if not existing_clips and dest_zip.exists():
+                logger.info("Extracting MAD audio archive to %s...", extract_target)
+                with zipfile.ZipFile(dest_zip, "r") as z:
+                    members = [m for m in z.namelist() if m.lower().endswith(".wav")]
+                    if sample_mode:
+                        members = members[:25]
+                    z.extractall(extract_target, members=members)
+                logger.info("Extracted %d MAD audio clips to %s", len(members), extract_target)
+
+            return dl_result
 
         except Exception as e:
             logger.error("Kaggle download failed for %s: %s", self.KAGGLE_DATASET_SLUG, e)
@@ -141,6 +133,21 @@ class MadFetcher(BaseFetcher):
 
     @staticmethod
     def _kaggle_credentials_present() -> bool:
-        if os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY"):
+        token = os.environ.get("KAGGLE_ACCESS_TOKEN") or os.environ.get("KAGGLE_API_TOKEN")
+        if token and not token.startswith("your_"):
             return True
-        return (Path.home() / ".kaggle" / "kaggle.json").exists()
+        username = os.environ.get("KAGGLE_USERNAME", "").strip()
+        key = os.environ.get("KAGGLE_KEY", "").strip()
+        if username and key and not username.startswith("your_") and not key.startswith("your_"):
+            return True
+        kaggle_json = Path.home() / ".kaggle" / "kaggle.json"
+        if kaggle_json.is_file():
+            try:
+                import json
+                with open(kaggle_json, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if data.get("token") or data.get("access_token") or (data.get("username") and data.get("key")):
+                        return True
+            except Exception:
+                pass
+        return False

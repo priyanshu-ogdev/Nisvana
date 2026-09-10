@@ -62,10 +62,30 @@ class TestMadFetcher:
     def test_mad_fails_loudly_without_kaggle_credentials(self, monkeypatch, tmp_path):
         monkeypatch.delenv("KAGGLE_USERNAME", raising=False)
         monkeypatch.delenv("KAGGLE_KEY", raising=False)
+        monkeypatch.delenv("KAGGLE_ACCESS_TOKEN", raising=False)
+        monkeypatch.delenv("KAGGLE_API_TOKEN", raising=False)
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "fake_home")
         fetcher = MadFetcher(tmp_path)
         result = fetcher._fetch_from_kaggle(dry_run=True, sample_mode=True)
         assert result.success is False
         assert "Kaggle" in (result.error or "")
+
+    def test_mad_credentials_detection_with_access_token(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("KAGGLE_USERNAME", raising=False)
+        monkeypatch.delenv("KAGGLE_KEY", raising=False)
+        monkeypatch.setenv("KAGGLE_ACCESS_TOKEN", "KGAT_test_dummy_token")
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "fake_home")
+        fetcher = MadFetcher(tmp_path)
+        assert fetcher._kaggle_credentials_present() is True
+
+    def test_mad_credentials_detection_with_legacy_keys(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("KAGGLE_ACCESS_TOKEN", raising=False)
+        monkeypatch.delenv("KAGGLE_API_TOKEN", raising=False)
+        monkeypatch.setenv("KAGGLE_USERNAME", "test_user")
+        monkeypatch.setenv("KAGGLE_KEY", "test_key")
+        monkeypatch.setattr(Path, "home", lambda: tmp_path / "fake_home")
+        fetcher = MadFetcher(tmp_path)
+        assert fetcher._kaggle_credentials_present() is True
 
     def test_mad_dry_run(self, tmp_path):
         fetcher = MadFetcher(tmp_path)

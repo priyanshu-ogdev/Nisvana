@@ -112,6 +112,34 @@ class BaseFetcher(ABC):
             if token and not token.startswith("your_"):
                 headers["X-Dataverse-key"] = token
 
+        # Kaggle API (Bearer token or Basic Auth)
+        elif "kaggle.com" in domain:
+            token = os.environ.get("KAGGLE_ACCESS_TOKEN") or os.environ.get("KAGGLE_API_TOKEN")
+            if token and not token.startswith("your_"):
+                headers["Authorization"] = f"Bearer {token}"
+            else:
+                u = os.environ.get("KAGGLE_USERNAME", "").strip()
+                k = os.environ.get("KAGGLE_KEY", "").strip()
+                if not (u and k and not u.startswith("your_") and not k.startswith("your_")):
+                    kaggle_json = Path.home() / ".kaggle" / "kaggle.json"
+                    if kaggle_json.is_file():
+                        try:
+                            import json
+                            with open(kaggle_json, "r", encoding="utf-8") as f:
+                                kdata = json.load(f)
+                                kt = kdata.get("token", "").strip() or kdata.get("access_token", "").strip()
+                                if kt:
+                                    headers["Authorization"] = f"Bearer {kt}"
+                                    return headers
+                                u = kdata.get("username", "").strip()
+                                k = kdata.get("key", "").strip()
+                        except Exception:
+                            pass
+                if u and k and not u.startswith("your_") and not k.startswith("your_"):
+                    import base64
+                    cred = base64.b64encode(f"{u}:{k}".encode()).decode()
+                    headers["Authorization"] = f"Basic {cred}"
+
         return headers
 
     @abstractmethod
@@ -202,8 +230,18 @@ class BaseFetcher(ABC):
             try:
                 resp = self.session.head(url, headers=req_headers, timeout=self.timeout, allow_redirects=True, verify=self.verify_ssl)
                 if resp.status_code >= 400:
-                    resp = self.session.get(url, headers=req_headers, timeout=self.timeout, stream=True, allow_redirects=True, verify=self.verify_ssl)
+                    probe_headers = dict(req_headers)
+                    probe_headers["Range"] = "bytes=0-0"
+                    resp = self.session.get(url, headers=probe_headers, timeout=self.timeout, stream=True, allow_redirects=True, verify=self.verify_ssl)
                 size = int(resp.headers.get("content-length", 0))
+                if "content-range" in resp.headers:
+                    cr = resp.headers["content-range"]
+                    if "/" in cr:
+                        try:
+                            size = int(cr.split("/")[-1])
+                        except ValueError:
+                            pass
+                resp.close()
                 logger.info("[DRY RUN] URL reachable (%s). Content-Length: %d bytes (%.2f MB)", resp.status_code, size, size / (1024 * 1024))
                 return DownloadResult(
                     success=resp.status_code < 400,
