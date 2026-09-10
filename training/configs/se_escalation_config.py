@@ -54,7 +54,7 @@ class SeEscalationConfig(BaseModelConfig):
     max_epochs: int = 25                           # shorter than Model 1 -- lighter fine-tune
     early_stopping_patience: int = 8
 
-    max_sample_len_s: float = 3.0
+    max_sample_len_s: float = 4.0  # REVIEW-PASS FIX: matches data_forge's real 4.0s target_duration_sec, see se_primary_config.py's fuller note
 
     # THE key change vs. Model 1 / vs. stock: reweighted toward low SNR.
     # Stock's roughly-uniform 7-way SNR distribution shifted so -5/0dB

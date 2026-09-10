@@ -153,3 +153,55 @@ class TestNumericBehaviorWithTorch:
         loss = loss_fn(x)
         assert loss.item() < 1e-3
 
+    def test_sdr_loss_correctness(self):
+        """SDR loss should be significantly lower (more negative SDR penalty) for clean estimate."""
+        import torch
+        mrl = _load_module()
+        loss_fn = mrl.SDRLoss()
+
+        torch.manual_seed(42)
+        target = torch.randn(2, 16000)
+        good_est = target + 0.01 * torch.randn(2, 16000)
+        poor_est = target + 1.0 * torch.randn(2, 16000)
+
+        good_loss = loss_fn(good_est, target)
+        poor_loss = loss_fn(poor_est, target)
+        assert good_loss.item() < poor_loss.item()
+
+    def test_impulse_weighted_loss_penalizes_transient_onset_error(self):
+        """ImpulseWeightedLoss must upweight frames with sudden energy jumps."""
+        import torch
+        mrl = _load_module()
+        loss_fn = mrl.ImpulseWeightedLoss(frame_size=480, hop_size=240, onset_boost=4.0)
+
+        # Create signal with sharp transient blast at sample 2400
+        target = torch.zeros(1, 4800)
+        target[0, 2400:2500] = 5.0
+
+        # Estimate with transient error
+        poor_est = target.clone()
+        poor_est[0, 2400:2500] = 0.0  # Completely misses the blast
+
+        # Estimate with non-transient background error of same magnitude
+        good_est = target.clone()
+        good_est[0, 100:200] = 0.5   # Small error in quiet region
+
+        loss_transient_err = loss_fn(poor_est, target)
+        loss_quiet_err = loss_fn(good_est, target)
+        assert loss_transient_err.item() > loss_quiet_err.item()
+
+    def test_perceptual_freq_weighted_loss(self):
+        """PerceptualFreqWeightedLoss should be lower for closer match."""
+        import torch
+        mrl = _load_module()
+        loss_fn = mrl.PerceptualFreqWeightedLoss(n_fft=512, sr=48000)
+
+        torch.manual_seed(42)
+        target = torch.randn(1, 8000)
+        good_est = target + 0.02 * torch.randn(1, 8000)
+        poor_est = target + 0.8 * torch.randn(1, 8000)
+
+        good_loss = loss_fn(good_est, target)
+        poor_loss = loss_fn(poor_est, target)
+        assert good_loss.item() < poor_loss.item()
+

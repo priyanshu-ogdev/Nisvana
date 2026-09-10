@@ -13,6 +13,7 @@
 | :--- | :--- | :--- |
 | **[`weighted_shard_sampler.py`](file:///d:/Nisvana/training/data/weighted_shard_sampler.py)** | Shard Ingestion & Sample Weighting | Connects PyTorch DataLoader streams to `data/shards/speech_enhancement/`. Reads per-sample metadata sidecars (`{clip_id}.json`), applies Sync-Tier down-weighting ($0.25\times$ for 16kHz upsampled audio), and applies class oversampling factors ($6\times$ for tanks, $5\times$ for howitzers/drones/wind, $4\times$ for jets). |
 | **[`spec_augment.py`](file:///d:/Nisvana/training/data/spec_augment.py)** | SpecMix Dynamic Augmentation | Applies on-the-fly dynamic time-frequency masking on mixture spectrograms. Fills masked regions with ambient noise slices rather than zeros to preserve physical acoustic energy floors. Applied exclusively to mixtures; clean target speech remains 100% untouched. |
+| **[`streaming_chunker.py`](file:///d:/Nisvana/training/data/streaming_chunker.py)** | Canonical 10ms Chunker | Slices arbitrary length audio tensors into exact 480-sample (10ms @ 48kHz) streaming frames with zero-padding and remainder alignment for streaming evaluation and test parity. |
 | **`__init__.py`** | Package Exports | Cleanly exports `compute_sample_weight`, `build_weighted_se_dataset`, and `apply_spec_mix`. |
 
 ---

@@ -123,6 +123,93 @@ def compute_segmental_snr_db(
     return float(np.mean(snrs)) if snrs else compute_snr_db(estimate, target)
 
 
+def compute_per_band_snr_db(
+    estimate: Union[torch.Tensor, np.ndarray],
+    target: Union[torch.Tensor, np.ndarray],
+    sr: int = 48000,
+    n_fft: int = 2048,
+    n_bands: int = 8,
+    eps: float = 1e-10,
+) -> Dict[str, float]:
+    """
+    Frequency-weighted per-band SNR reporting across octave bands.
+    Returns SNR (dB) for each of 8 octave bands from ~125 Hz to ~16 kHz,
+    plus an A-weighted aggregate.
+
+    Critical for diagnosing spectral-specific enhancement failures:
+    - Low-band (125-500 Hz): vehicle rumble, rotor harmonics
+    - Mid-band (500-4000 Hz): speech formants, intelligibility-critical
+    - High-band (4000-16000 Hz): sibilants, Tier 3 upsampling artifacts
+
+    Returns:
+        Dict with keys like 'snr_band_125hz', 'snr_band_250hz', etc.,
+        plus 'snr_a_weighted' for the A-weighted aggregate.
+    """
+    if isinstance(estimate, torch.Tensor):
+        estimate = estimate.detach().cpu().numpy()
+    if isinstance(target, torch.Tensor):
+        target = target.detach().cpu().numpy()
+
+    estimate = np.ascontiguousarray(estimate.squeeze(), dtype=np.float64)
+    target = np.ascontiguousarray(target.squeeze(), dtype=np.float64)
+
+    n_samples = min(len(estimate), len(target))
+    if n_samples < n_fft:
+        return {"snr_a_weighted": compute_snr_db(estimate[:n_samples], target[:n_samples])}
+
+    hop = n_fft // 4
+    window = np.hanning(n_fft)
+
+    _, _, est_stft = signal.stft(estimate[:n_samples], fs=sr, window=window, nperseg=n_fft, noverlap=n_fft - hop)
+    _, _, tgt_stft = signal.stft(target[:n_samples], fs=sr, window=window, nperseg=n_fft, noverlap=n_fft - hop)
+
+    freqs = np.linspace(0, sr / 2, est_stft.shape[0])
+
+    # Octave band center frequencies (ISO 266 standard)
+    band_centers = [125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0]
+    band_centers = [f for f in band_centers if f <= sr / 2]
+
+    results: Dict[str, float] = {}
+    a_weighted_snrs = []
+    a_weights_per_band = []
+
+    for fc in band_centers:
+        low = fc / np.sqrt(2.0)
+        high = fc * np.sqrt(2.0)
+        band_idx = np.where((freqs >= low) & (freqs < high))[0]
+
+        if len(band_idx) == 0:
+            continue
+
+        tgt_band_power = np.mean(np.abs(tgt_stft[band_idx, :]) ** 2)
+        err_band_power = np.mean(np.abs(est_stft[band_idx, :] - tgt_stft[band_idx, :]) ** 2)
+
+        if tgt_band_power < eps:
+            band_snr = 0.0
+        else:
+            band_snr = 10.0 * np.log10(max(tgt_band_power, eps) / max(err_band_power, eps))
+
+        band_label = f"snr_band_{int(fc)}hz"
+        results[band_label] = round(float(band_snr), 2)
+
+        # A-weighting for aggregate (IEC 61672-1 simplified)
+        f2 = fc ** 2
+        a_num = 12194.0 ** 2 * f2 ** 2
+        a_den = (f2 + 20.6 ** 2) * np.sqrt((f2 + 107.7 ** 2) * (f2 + 737.9 ** 2)) * (f2 + 12194.0 ** 2)
+        a_weight = a_num / (a_den + eps)
+        a_weights_per_band.append(a_weight)
+        a_weighted_snrs.append(band_snr * a_weight)
+
+    # A-weighted aggregate
+    if a_weights_per_band:
+        total_weight = sum(a_weights_per_band)
+        results["snr_a_weighted"] = round(float(sum(a_weighted_snrs) / max(total_weight, eps)), 2)
+    else:
+        results["snr_a_weighted"] = compute_snr_db(estimate[:n_samples], target[:n_samples])
+
+    return results
+
+
 # ==============================================================================
 # 2. Intelligibility (STOI) & Quality (PESQ, DNSMOS)
 # ==============================================================================

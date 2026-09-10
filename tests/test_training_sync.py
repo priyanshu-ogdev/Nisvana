@@ -88,8 +88,8 @@ class TestTaxonomyAndWeightingSynchronization:
         assert CLASS_OVERSAMPLE_FACTORS["siren_emergency"] == 5.0
         assert CLASS_OVERSAMPLE_FACTORS["wind_rotor_gap"] == 5.0
 
-        # Abundant classes get 1.0x
-        assert CLASS_OVERSAMPLE_FACTORS["gunshot_firearm"] == 1.0
+        # Gunshot firearm gets 2.5x per Rev 3 P0.1 data audit
+        assert CLASS_OVERSAMPLE_FACTORS["gunshot_firearm"] == 2.5
         assert CLASS_OVERSAMPLE_FACTORS["drone_uav"] == 1.0
         assert CLASS_OVERSAMPLE_FACTORS["clean_speech"] == 1.0
 

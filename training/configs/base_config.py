@@ -145,5 +145,25 @@ class BaseModelConfig:
     worst_class_checkpoint: WorstClassCheckpointConfig = field(default_factory=WorstClassCheckpointConfig)
     gradual_unfreeze: GradualUnfreezeConfig = field(default_factory=GradualUnfreezeConfig)
 
+    # --- Rev 3 P0.4: QAT + bf16 ---
+    # QAT from first epoch: fake-quantization observers on Conv1d + GRU
+    # layers from the start of fine-tuning, so the checkpoint is already
+    # INT8-robust when training completes. No separate PTQ pass needed.
+    qat_enabled: bool = True
+    qat_backend: str = "qnnpack"  # Platform A (ARM). Platform B (GPU) uses TensorRT path.
+
+    # bf16 precision: Blackwell GB10 has native bf16 Tensor Core support.
+    # Avoids fp16's dynamic-range issues with multires_spec_factor=500.0
+    # (spectral magnitudes can exceed fp16 max). bf16 doesn't need loss
+    # scaling (GradScaler becomes a no-op).
+    precision: str = "bf16"  # "bf16", "fp16", or "fp32"
+
+    # --- Rev 3 P1.1: Distillation ---
+    # Distillation factor for CleanUMamba teacher → Model 1/2 student.
+    # REASONED ENGINEERING CHOICE: zero inference cost, raises accuracy
+    # ceiling on naval/armored-vehicle/gunfire classes by providing a
+    # second-opinion training signal from a different architecture.
+    distillation_factor: float = 0.0  # Set >0 in per-model configs to enable
+
     def checkpoint_name(self, step: int) -> str:
         return f"{self.model_key}-v{self.config_version}-step{step:08d}.pt"

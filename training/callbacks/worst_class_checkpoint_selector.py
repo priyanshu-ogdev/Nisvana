@@ -46,11 +46,40 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 
-# The two classes carrying the standing disclosure from the data-forge
-# review. If a future data pass genuinely closes one of these gaps, remove
-# it here -- don't leave a class permanently flagged past the point it's
-# actually still weak.
-DISCLOSED_WEAK_CLASSES: List[str] = ["rotor_vehicle_drone", "wind"]
+# REVIEW-PASS FIX (this pass): the previous values here --
+# ["rotor_vehicle_drone", "wind"] -- do not match any real UnifiedClass
+# value in data_forge/config.py, and were never caught because they
+# happen to exist as legacy ALIAS keys inside se_primary_config.py's
+# CLASS_OVERSAMPLE_FACTORS dict (a different lookup, for sample-weighting,
+# not eval-metric-key naming) -- so nothing raised an error, it just
+# silently never matched. Traced end-to-end: se_primary_trainer.py builds
+# eval keys from `meta.get("unified_class", ...)`, the REAL per-sample
+# metadata field, which uses data_forge's actual UnifiedClass string
+# values (e.g. "wind_rotor_gap", "tank_tracked") -- never "wind" or
+# "rotor_vehicle_drone" as standalone strings. This means the regression
+# guard below has been evaluating zero real classes since it was added:
+# every `if key not in eval_metrics: continue` silently skipped, every time.
+#
+# Corrected to the real, genuinely-thinnest UnifiedClass values, per
+# data_forge/config.py's own oversample-factor weights (6.0 = the five
+# NOISEX-92-sourced classes, "~1h total across 7 platforms -- most scarce
+# Tier-A source"; wind_rotor_gap's own comment states "no dedicated corpus
+# exists (confirmed absent)" -- the single most severe disclosed gap of
+# any class in the taxonomy). All six are watched, not just the two most
+# convenient to name, since they share the same underlying scarcity and a
+# regression in any one of them is the exact failure mode this callback
+# exists to catch.
+DISCLOSED_WEAK_CLASSES: List[str] = [
+    "wind_rotor_gap",       # "no dedicated corpus exists (confirmed absent)" -- data_forge's own words
+    "tank_tracked",         # NOISEX-92 only, ~1h across 7 platforms
+    "artillery_howitzer",   # NOISEX-92 only, same scarcity
+    "jet_cockpit",          # NOISEX-92 only, same scarcity
+    "naval_destroyer",      # NOISEX-92 only, same scarcity
+    "military_vehicle",     # NOISEX-92 only, same scarcity
+    "gunshot_firearm",      # CORRECTED: only 3 of 5 cited sources have fetchers (Dryad, MAD, NOISEX-92).
+                            # NIJ/Kabealo/FSD50K contribute zero real hours. Run
+                            # `python -m data_forge.verifier.gunfire_audit` for actual count.
+]
 
 # Which per-class metrics this selector guards, and the eval-dict key
 # prefix each one is read from (e.g. "pesq_wind", "snr_wind"). Extending

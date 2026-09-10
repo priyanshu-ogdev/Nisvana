@@ -52,7 +52,7 @@ class SeCrosscheckConfig(BaseModelConfig):
     total_finetune_steps: int = 150_000    # paper's documented fine-tune length was 100K; +50% given our data mix
                                             # is more diverse (defence classes) than the paper's original DNS-only mix
 
-    max_sample_len_s: float = 3.0          # matched to Models 1-2 for comparable eval
+    max_sample_len_s: float = 4.0          # REVIEW-PASS FIX: matched to Models 1-2 (now corrected to 4.0 -- data_forge's real clip length) for comparable eval
 
     loss_fn: str = "full_stft_loss"        # paper Section V-A
 

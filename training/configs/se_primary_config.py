@@ -34,14 +34,17 @@ CLASS_OVERSAMPLE_FACTORS: Dict[str, float] = {
     "naval_destroyer": 6.0,
     "military_vehicle": 6.0,
     "explosion_blast": 4.0,
-    "gunshot_firearm": 1.0,
+    "gunshot_firearm": 2.5,
     "drone_uav": 1.0,
     "siren_emergency": 5.0,
     "wind_rotor_gap": 5.0,
     "clean_speech": 1.0,
     "general_noise": 1.0,
     # Broad training taxonomy aliases
-    "gunfire": 1.0,                        # ~15-20h combined across NIJ/Kabealo/Cooper&Shaw/MAD/FSD50K -- abundant
+    "gunfire": 2.5,                        # CORRECTED: only 3 of 5 cited sources have fetchers (Dryad, MAD subset,
+                                            # NOISEX-92 machinegun.wav). NIJ/Kabealo/FSD50K have ZERO fetcher code.
+                                            # Real hours likely well under the stale 15-20h estimate. Run
+                                            # `python -m data_forge.verifier.gunfire_audit` for the actual number.
     "rotor_vehicle_drone": 1.0,            # DroneAudioSet alone is 23.5h -- abundant, BUT see note below
     "vehicle_engine_general": 1.0,         # broad FSD50K/AudioSet/NOISEX-92 coverage -- abundant
     "babble_crowd": 1.0,
@@ -100,6 +103,7 @@ class SePrimaryConfig(BaseModelConfig):
     conv_ch: int = 64              # unchanged from stock config.ini
 
     pretrained_init: str = "fal/DeepFilterNet3"   # warm-start, not from-scratch
+    distillation_factor: float = 0.3              # Rev 3 P1.1: CleanUMamba soft distillation factor
 
     # Optimizer -- half the base LR (0.001 -> 0.0005) to reflect warm-start,
     # not a from-scratch run, while still being high enough to genuinely
@@ -121,7 +125,22 @@ class SePrimaryConfig(BaseModelConfig):
     max_epochs: int = 50                          # vs. stock's 120 -- fine-tune, not from-scratch
     early_stopping_patience: int = 12
 
-    max_sample_len_s: float = 3.0                 # unchanged from stock -- no reason to deviate
+    # REVIEW-PASS FIX: was 3.0, "unchanged from stock" -- i.e. inherited from
+    # DeepFilterNet3's own upstream default clip length, never checked against
+    # THIS project's actual data pipeline. data_forge/config.py's
+    # ForgeMixingConfig.target_duration_sec = 4.0, and shard_writer.py's own
+    # docstring says "~1-2GB shards at typical 4s/48kHz clip sizes" -- every
+    # sample this pipeline actually produces is 4s, not 3s. This field is
+    # also currently unenforced anywhere in training/trainers or
+    # training/data (grepped repo-wide -- zero hits), so the mismatch wasn't
+    # silently truncating anything; it was simply describing a bound nothing
+    # checks. Corrected to match reality rather than an unrelated upstream
+    # default, and flagged as needing real enforcement (crop/pad in the
+    # dataset loading path) as a separate, still-open follow-up -- a
+    # documented-but-unchecked value is a residual risk on its own, since a
+    # future data_forge change or an edge-case longer clip has nothing
+    # currently protecting memory/compute against it.
+    max_sample_len_s: float = 4.0                 # matches data_forge's real target_duration_sec
 
     # Training SNR set: stock's -100/-5/0/5/10/20/40. We drop -100 (the
     # "effectively clean" bucket) proportion slightly and lean toward the

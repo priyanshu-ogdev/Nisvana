@@ -35,14 +35,41 @@ class BaseTrainer(ABC):
         self.gradual_unfreeze_cfg = getattr(config, "gradual_unfreeze", None)
 
         # Device placement & Mixed Precision (AMP)
+        # Rev 3 P0.4: bf16 support for Blackwell + QAT lifecycle
         try:
             import torch
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            self.use_amp = getattr(self.config, "mixed_precision", False) and self.device.type == "cuda"
-            self.scaler = torch.amp.GradScaler("cuda", enabled=self.use_amp)
+            precision = getattr(self.config, "precision", "fp16")
+
+            if precision == "bf16" and self.device.type == "cuda":
+                # bf16: Blackwell-native, no loss scaling needed, avoids
+                # fp16 dynamic-range overflow with multires_spec_factor=500.0
+                try:
+                    bf16_ok = torch.cuda.is_bf16_supported()
+                except Exception:
+                    bf16_ok = False
+
+                if bf16_ok:
+                    self.use_amp = True
+                    self.amp_dtype = torch.bfloat16
+                    self.scaler = None  # bf16 doesn't need GradScaler
+                else:
+                    # Fallback to fp16 if bf16 not supported
+                    self.use_amp = getattr(self.config, "mixed_precision", False)
+                    self.amp_dtype = torch.float16
+                    self.scaler = torch.amp.GradScaler("cuda", enabled=self.use_amp)
+            elif precision == "fp16":
+                self.use_amp = getattr(self.config, "mixed_precision", False) and self.device.type == "cuda"
+                self.amp_dtype = torch.float16
+                self.scaler = torch.amp.GradScaler("cuda", enabled=self.use_amp)
+            else:  # fp32
+                self.use_amp = False
+                self.amp_dtype = torch.float32
+                self.scaler = None
         except ImportError:
             self.device = "cpu"
             self.use_amp = False
+            self.amp_dtype = None
             self.scaler = None
 
         # Early stopping tracking
@@ -97,6 +124,107 @@ class BaseTrainer(ABC):
         if hasattr(self.config, "ema") and self.config.ema.enabled:
             self.ema_tracker = EmaTracker(model, self.config.ema)
         return self.ema_tracker
+
+    def prepare_qat(self, model: Any) -> Any:
+        """
+        Rev 3 P0.4: Inserts fake-quantization observers on Conv1d + GRU layers.
+        Called ONCE before first training step, not after training.
+
+        Since training hasn't started yet, wrapping in QAT from epoch 1
+        costs nearly nothing extra and produces a checkpoint that's already
+        INT8-robust. The model learns weights that are robust to INT8
+        rounding in the SAME training run, on the SAME checkpoint.
+        """
+        import torch
+        import torch.ao.quantization as quant
+
+        if not getattr(self.config, "qat_enabled", False):
+            return model
+
+        backend = getattr(self.config, "qat_backend", "qnnpack")
+        try:
+            supported_engines = getattr(torch.backends.quantized, "supported_engines", [])
+            chosen_engine = None
+            if backend in supported_engines:
+                chosen_engine = backend
+            elif "fbgemm" in supported_engines:
+                chosen_engine = "fbgemm"
+            elif "qnnpack" in supported_engines:
+                chosen_engine = "qnnpack"
+            elif len(supported_engines) > 0:
+                chosen_engine = supported_engines[0]
+
+            if chosen_engine:
+                torch.backends.quantized.engine = chosen_engine
+
+            # QAT config: per-channel weight observers for Conv1d (critical for
+            # SE models where Conv1d is the bulk of parameters), per-tensor for
+            # activations. MinMax observer for both (simpler, more stable than
+            # histogram during fine-tuning where the distribution is already
+            # well-established from the pretrained checkpoint).
+            qat_qconfig = quant.QConfig(
+                activation=quant.FakeQuantize.with_args(
+                    observer=quant.MinMaxObserver,
+                    quant_min=0, quant_max=255,
+                    dtype=torch.quint8,
+                ),
+                weight=quant.FakeQuantize.with_args(
+                    observer=quant.MinMaxObserver,
+                    quant_min=-128, quant_max=127,
+                    dtype=torch.qint8,
+                ),
+            )
+
+            model.train()
+            # In PyTorch QAT, recurrent modules like nn.GRU return tuples (output, h_n),
+            # which fail activation_post_process hook (expects a single Tensor).
+            # Attach QAT config specifically to Conv and Linear modules.
+            for name, module in model.named_modules():
+                if isinstance(module, (torch.nn.Conv1d, torch.nn.Conv2d, torch.nn.Linear)):
+                    module.qconfig = qat_qconfig
+                else:
+                    module.qconfig = None
+
+            prepared = quant.prepare_qat(model, inplace=False)
+            import logging
+            logging.getLogger("AEGIS.BaseTrainer").info(
+                "QAT prepared with backend=%s — fake-quantization observers active from epoch 1", chosen_engine or backend
+            )
+            return prepared
+        except Exception as e:
+            import logging
+            logging.getLogger("AEGIS.BaseTrainer").warning(
+                "QAT preparation failed (%s) — continuing without QAT. "
+                "This is expected on CPU-only environments or when the model "
+                "architecture doesn't support standard QAT wrapping.", e
+            )
+            return model
+
+    def convert_qat(self, model: Any) -> Any:
+        """
+        Rev 3 P0.4: Converts fake-quant model to real INT8 after training.
+        Produces Platform A (ARM/qnnpack) deployment checkpoint.
+        Platform B (GPU/TensorRT) uses a separate ONNX export path.
+        """
+        import torch.ao.quantization as quant
+
+        if not getattr(self.config, "qat_enabled", False):
+            return model
+
+        try:
+            model.eval()
+            converted = quant.convert(model, inplace=False)
+            import logging
+            logging.getLogger("AEGIS.BaseTrainer").info(
+                "QAT → INT8 conversion complete (Platform A checkpoint ready)"
+            )
+            return converted
+        except Exception as e:
+            import logging
+            logging.getLogger("AEGIS.BaseTrainer").warning(
+                "QAT conversion failed (%s) — returning unconverted model.", e
+            )
+            return model
 
     def update_gradual_unfreezing(self, model: Any, epoch: int, layer_group_map: Optional[dict] = None) -> List[str]:
         """

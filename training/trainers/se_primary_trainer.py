@@ -36,9 +36,21 @@ class SePrimaryTrainer(BaseTrainer):
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
 
+        # Gradient accumulation for effective large batch sizes on DGX Spark
+        # (4s @ 48kHz = 192K samples per clip; at batch=32 that's ~6M samples
+        # per step — accumulation lets us reach effective batch=128+ without OOM)
+        self.gradient_accumulation_steps = getattr(cfg, "gradient_accumulation_steps", 4)
+        self._accum_counter = 0
+
         self.model = self.build_model()
         if hasattr(self, "device") and isinstance(self.device, torch.device):
             self.model.to(self.device)
+
+        # Rev 3 P0.4: QAT from first epoch — insert fake-quantization
+        # observers BEFORE the optimizer is created, so it sees the
+        # QAT-wrapped parameters (including observer buffers).
+        if getattr(self.config, "qat_enabled", False):
+            self.model = self.prepare_qat(self.model)
 
         wd = getattr(self.config, "weight_decay", getattr(self.config, "weight_decay_end", 1e-2))
         beta1 = getattr(self.config, "adam_beta1", 0.9)
@@ -66,6 +78,32 @@ class SePrimaryTrainer(BaseTrainer):
         # Initialise EMA shadow weights
         self.init_ema(self.model)
 
+        # Rev 3 P1.1: CleanUMamba distillation teacher (REASONED ENGINEERING
+        # CHOICE, not cited research). Zero inference cost — teacher runs
+        # only during training. Raises accuracy on naval/armored-vehicle/
+        # gunfire classes by providing a second-opinion signal from a
+        # different architecture.
+        self.teacher = None
+        self.distillation_loss_fn = None
+        distill_factor = getattr(self.config, "distillation_factor", 0.0)
+        if distill_factor > 0:
+            from training.models.model_loader import build_model_for_key
+            try:
+                self.teacher = build_model_for_key("aegis-se-crosscheck")
+                if hasattr(self, "device") and isinstance(self.device, torch.device):
+                    self.teacher.to(self.device)
+                self.teacher.eval()
+                for p in self.teacher.parameters():
+                    p.requires_grad_(False)
+                from training.losses.multires_loss import DistillationLoss
+                self.distillation_loss_fn = DistillationLoss()
+                self.distillation_factor = distill_factor
+            except Exception as e:
+                import logging
+                logging.getLogger("AEGIS.SePrimaryTrainer").warning(
+                    "Distillation teacher setup failed (%s) — continuing without distillation.", e
+                )
+
     def build_model(self) -> nn.Module:
         """Builds model architecture via unified model factory."""
         from training.models.model_loader import build_model_for_key
@@ -73,7 +111,12 @@ class SePrimaryTrainer(BaseTrainer):
 
     def training_step(self, batch: Any) -> dict:
         self.model.train()
-        self.optimizer.zero_grad()
+        self._accum_counter += 1
+        is_accumulation_boundary = (self._accum_counter % self.gradient_accumulation_steps == 0)
+
+        # Only zero gradients at the start of an accumulation window
+        if self._accum_counter % self.gradient_accumulation_steps == 1 or self.gradient_accumulation_steps == 1:
+            self.optimizer.zero_grad()
 
         # Update learning rate with linear warmup and cosine decay
         current_lr = self.get_lr(self.step)
@@ -96,49 +139,81 @@ class SePrimaryTrainer(BaseTrainer):
         if not isinstance(clean, torch.Tensor):
             clean = torch.tensor(clean, dtype=torch.float32)
 
+        # Enforce max_sample_len_s — crop if too long, pad only if below minimum FFT size (2048)
+        max_len = int(getattr(self.config, "max_sample_len_s", 4.0) * 48000)
+        min_len = 2048
+        if noisy.shape[-1] > max_len:
+            noisy = noisy[..., :max_len]
+            clean = clean[..., :max_len]
+        elif noisy.shape[-1] < min_len:
+            pad = min_len - noisy.shape[-1]
+            noisy = torch.nn.functional.pad(noisy, (0, pad))
+            clean = torch.nn.functional.pad(clean, (0, pad))
+
         if hasattr(self, "device") and isinstance(self.device, torch.device):
             noisy = noisy.to(self.device)
             clean = clean.to(self.device)
 
-        # On-the-fly SpecMix on noisy input if 2D/3D spectrogram or time-frequency
-        if hasattr(self.config, "spec_mix") and self.config.spec_mix.enabled:
-            # SpecMix applies to 2D numpy arrays
-            pass
+        amp_enabled = getattr(self, "use_amp", False) and getattr(self, "device", None) is not None and getattr(self.device, "type", "") == "cuda"
+        amp_dtype = getattr(self, "amp_dtype", torch.bfloat16 if getattr(self, "scaler", None) is None else torch.float16)
 
-        if getattr(self, "use_amp", False) and self.scaler is not None:
-            with torch.amp.autocast(device_type="cuda"):
-                enhanced = self.model(noisy)
-                losses = self.loss_fn(enhanced, clean)
-                total_loss = losses["total"]
-
-            self.scaler.scale(total_loss).backward()
-            if self.config.gradient_clip_norm > 0:
-                self.scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.gradient_clip_norm)
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
-        else:
+        def _forward_and_loss():
             enhanced = self.model(noisy)
             losses = self.loss_fn(enhanced, clean)
-            total_loss = losses["total"]
+            if self.teacher is not None and self.distillation_loss_fn is not None:
+                with torch.no_grad():
+                    teacher_enhanced = self.teacher(noisy)
+                distill_loss = self.distillation_loss_fn(enhanced, teacher_enhanced) * self.distillation_factor
+                losses["distillation_loss"] = distill_loss
+                losses["total"] = losses["total"] + distill_loss
+            return enhanced, losses
 
+        if amp_enabled:
+            with torch.amp.autocast(device_type="cuda", dtype=amp_dtype):
+                enhanced, losses = _forward_and_loss()
+                total_loss = losses["total"] / self.gradient_accumulation_steps
+        else:
+            enhanced, losses = _forward_and_loss()
+            total_loss = losses["total"] / self.gradient_accumulation_steps
+
+        if amp_enabled and self.scaler is not None:
+            self.scaler.scale(total_loss).backward()
+            if is_accumulation_boundary:
+                if self.config.gradient_clip_norm > 0:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.gradient_clip_norm)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+        else:
             total_loss.backward()
-            if self.config.gradient_clip_norm > 0:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.gradient_clip_norm)
-            self.optimizer.step()
+            if is_accumulation_boundary:
+                if self.config.gradient_clip_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.gradient_clip_norm)
+                self.optimizer.step()
 
-        if self.ema_tracker:
+        if is_accumulation_boundary and self.ema_tracker:
             self.ema_tracker.update(self.model)
 
         res = {k: v.item() if isinstance(v, torch.Tensor) else v for k, v in losses.items()}
-        res["loss"] = total_loss.item()
+        res["loss"] = losses["total"].item()  # Report unscaled loss
         res["lr"] = current_lr
+        res["gradient_accumulation_step"] = self._accum_counter % self.gradient_accumulation_steps
 
         curriculum_snr = self.get_curriculum_snr()
         if curriculum_snr is not None:
             res["curriculum_snr_target_db"] = curriculum_snr
 
         return res
+
+    def export_deployment_model(self) -> Any:
+        """
+        Rev 3 P0.4: Converts QAT model to Platform A INT8 deployment model.
+        Returns converted model ready for edge inference.
+        """
+        model_to_convert = self.model
+        if self.ema_tracker:
+            model_to_convert = self.ema_tracker.shadow_model
+        return self.convert_qat(model_to_convert)
 
     def eval_step(self, batch: Any) -> dict:
         self.model.eval()

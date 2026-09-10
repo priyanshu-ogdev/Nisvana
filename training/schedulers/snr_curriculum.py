@@ -58,8 +58,17 @@ class SnrCurriculumConfig:
     enabled: bool = False              # opt-in, see docstring -- evidence is genuinely mixed
     direction: Literal["easy_to_hard", "hard_to_easy"] = "easy_to_hard"  # SDCL's validated direction, as a
                                                                           # starting point, not a settled answer
-    start_mean_snr_db: float = 20.0
-    end_mean_snr_db: float = 0.0
+    start_mean_snr_db: float = 20.0    # matches data_forge's ForgeMixingConfig.max_snr_db (20.0) -- the easy end
+    # REVIEW-PASS FIX: was 0.0. data_forge/config.py's real mixing range is
+    # min_snr_db=-5.0 to max_snr_db=20.0 -- a curriculum floor of 0.0 meant
+    # the hardest 5dB of SNR this project's own data pipeline actually
+    # produces (-5 to 0dB, precisely the extreme-low-SNR region this
+    # project's own research -- the Fraunhofer comparative study -- flagged
+    # as the highest-risk range for real-time causal models) was NEVER
+    # emphasized by the curriculum's mean-shifting schedule, at any epoch,
+    # even at the end of training. Corrected to reach the data's actual
+    # floor.
+    end_mean_snr_db: float = -5.0      # matches data_forge's ForgeMixingConfig.min_snr_db -- the hard end
     decay_span_epochs: int = 30
     std_db: float = 8.0                # truncated-Gaussian spread around the epoch's mean, per SDCL's approach
 
@@ -88,3 +97,125 @@ def sample_snr_for_epoch(config: SnrCurriculumConfig, epoch: int, rng: np.random
     # Truncated at +/- 2 std to avoid sampling absurd SNRs far outside the
     # dataloader_snrs range each model config already defines.
     return float(np.clip(rng.normal(mean, config.std_db), mean - 2 * config.std_db, mean + 2 * config.std_db))
+
+
+# ==============================================================================
+# Noise-Type Curriculum (Phase 4 SOTA Addition)
+#
+# Complements the SNR curriculum above: while the SNR curriculum controls
+# HOW MUCH noise the model sees, this controls WHAT KIND of noise it sees
+# at each stage of training.
+#
+# Rationale for real-recordings-only training: with limited real data per
+# noise class (especially rare events like gunshots and explosions),
+# introducing all classes simultaneously forces the model to spread its
+# early learning capacity across classes with vastly different temporal
+# statistics. Starting with easier stationary/harmonic noise builds stable
+# spectral representations first, then progressively introduces harder
+# transient events once the model has a solid foundation. This is
+# analogous to how human listeners develop noise robustness — familiarity
+# with steady-state noise precedes ability to process sudden impulsive events.
+#
+# Implementation: provides class-level sampling weights per epoch that the
+# DataLoader's weighted sampler (weighted_shard_sampler.py) can consume.
+# Does NOT filter out any classes — all classes remain in the training pool
+# at all times (preventing complete blindness to any class), but their
+# relative sampling probability is modulated by the curriculum phase.
+# ==============================================================================
+
+@dataclass
+class NoiseTypeCurriculumConfig:
+    """Controls progressive introduction of noise difficulty categories."""
+    enabled: bool = False  # opt-in, same discipline as SNR curriculum
+
+    # Phase boundaries (in epochs)
+    phase_1_end_epoch: int = 10   # Stationary-dominant phase
+    phase_2_end_epoch: int = 25   # Mixed phase (all classes weighted equally)
+    # After phase_2_end_epoch: impulsive-boosted phase (emphasize hardest classes)
+
+    # Noise classes grouped by difficulty for curriculum progression.
+    # These must match the unified_class values in shard JSON metadata.
+    stationary_classes: List[str] = None
+    transient_classes: List[str] = None
+    impulsive_classes: List[str] = None
+
+    # Weight multipliers per phase for each difficulty tier
+    # Phase 1: stationary=2.0, transient=0.5, impulsive=0.3
+    # Phase 2: all=1.0 (uniform)
+    # Phase 3: stationary=0.7, transient=1.0, impulsive=2.0
+    phase_1_stationary_weight: float = 2.0
+    phase_1_transient_weight: float = 0.5
+    phase_1_impulsive_weight: float = 0.3
+    phase_3_stationary_weight: float = 0.7
+    phase_3_transient_weight: float = 1.0
+    phase_3_impulsive_weight: float = 2.0
+
+    def __post_init__(self):
+        if self.stationary_classes is None:
+            self.stationary_classes = [
+                "tank_tracked", "artillery_howitzer", "jet_cockpit",
+                "naval_destroyer", "military_vehicle", "drone_uav",
+                "general_noise", "wind_rotor_gap",
+                # Broad aliases
+                "armored_vehicle_naval_jet", "rotor_vehicle_drone",
+                "vehicle_engine_general", "broad_industrial",
+            ]
+        if self.transient_classes is None:
+            self.transient_classes = [
+                "siren_emergency", "siren",
+                "babble_crowd",
+            ]
+        if self.impulsive_classes is None:
+            self.impulsive_classes = [
+                "explosion_blast", "gunshot_firearm",
+                "explosion_artillery", "gunfire",
+            ]
+
+
+def get_noise_type_weight(
+    config: NoiseTypeCurriculumConfig,
+    unified_class: str,
+    epoch: int,
+) -> float:
+    """
+    Returns the curriculum sampling weight multiplier for a given noise class
+    at a given epoch. This weight is MULTIPLIED with the sync_tier weight and
+    class_oversample_factor already computed in weighted_shard_sampler.py —
+    it's an additional axis, not a replacement.
+
+    Returns 1.0 for all classes when curriculum is disabled or for classes
+    not found in any difficulty tier.
+    """
+    if not config.enabled:
+        return 1.0
+
+    # Determine which difficulty tier this class belongs to
+    if unified_class in config.stationary_classes:
+        tier = "stationary"
+    elif unified_class in config.transient_classes:
+        tier = "transient"
+    elif unified_class in config.impulsive_classes:
+        tier = "impulsive"
+    else:
+        return 1.0  # Unknown class — no curriculum modulation
+
+    # Phase 1: Stationary-dominant (easy start)
+    if epoch < config.phase_1_end_epoch:
+        weights = {
+            "stationary": config.phase_1_stationary_weight,
+            "transient": config.phase_1_transient_weight,
+            "impulsive": config.phase_1_impulsive_weight,
+        }
+    # Phase 2: Uniform (all classes equally weighted)
+    elif epoch < config.phase_2_end_epoch:
+        weights = {"stationary": 1.0, "transient": 1.0, "impulsive": 1.0}
+    # Phase 3: Impulsive-boosted (hard focus)
+    else:
+        weights = {
+            "stationary": config.phase_3_stationary_weight,
+            "transient": config.phase_3_transient_weight,
+            "impulsive": config.phase_3_impulsive_weight,
+        }
+
+    return weights.get(tier, 1.0)
+
