@@ -93,7 +93,7 @@ def _try_import_vendored_df_loss():
                 sys.modules["torchaudio.backend.common"] = common_mod
             elif not hasattr(torchaudio.backend.common, "AudioMetaData"):
                 torchaudio.backend.common.AudioMetaData = AudioMetaData
-        from df.loss import Loss as _DfLoss  # real package, if `deepfilternet[train]` is installed
+        from df.loss import MultiResSpecLoss as _DfLoss  # real package, if `deepfilternet[train]` is installed
         return _DfLoss
     except Exception:
         return None
@@ -501,52 +501,68 @@ def _compute_speech_mask(target: "torch.Tensor", config: ResolvedLossConfig) -> 
     return (rms > threshold).float()
 
 
-def build_se_loss(config: Optional[ResolvedLossConfig] = None, prefer_vendored: bool = True):
+def build_se_loss(config: Optional[ResolvedLossConfig] = None, prefer_vendored: bool = False):
     """
     Entry point trainers should call. Returns a callable
     `loss_fn(estimate, target) -> dict[str, Tensor]` including at least a
-    "total" key. Prefers the real vendored DeepFilterNet loss when
-    installed; falls back to the from-scratch implementation otherwise.
-
-    SOTA additions: SDR, impulse-weighted, and perceptual frequency-
-    weighted losses for improved generalization from real recordings.
+    "total" key. Uses native pure-PyTorch multi-resolution spectral loss +
+    framewise local SNR + SOTA extras by default. If `prefer_vendored=True`,
+    attempts to load DeepFilterNet's `MultiResSpecLoss` with safe fallback.
     """
     if config is None:
         config = ResolvedLossConfig()
 
     if prefer_vendored:
-        vendored = _try_import_vendored_df_loss()
-        if vendored is not None:
-            print("[training.losses.multires_loss] Using vendored df.loss.Loss "
-                  "(deepfilternet[train] is installed) + SOTA extras.")
-            vendored_fn = vendored(
-                factor_magnitude=config.multires_spec_factor,
-                factor_complex=config.multires_spec_factor_complex,
-                gamma=config.multires_spec_gamma,
-                fft_sizes=config.multires_fft_sizes,
-            )
-            extras = _build_sota_extras(config)
+        vendored_cls = _try_import_vendored_df_loss()
+        if vendored_cls is not None:
+            try:
+                vendored_fn = vendored_cls(
+                    n_ffts=config.multires_fft_sizes,
+                    gamma=config.multires_spec_gamma,
+                    factor=config.multires_spec_factor,
+                    f_complex=config.multires_spec_factor_complex,
+                )
+                local_snr = LocalSnrLoss(config) if config.local_snr_factor > 0 else None
+                extras = _build_sota_extras(config)
 
-            def _vendored_combined(estimate, target):
-                base = vendored_fn(estimate, target)
-                if not isinstance(base, dict):
-                    base = {"vendored_loss": base, "total": base}
-                total = base.get("total", sum(v for v in base.values() if isinstance(v, torch.Tensor)))
-                speech_mask = _compute_speech_mask(target, config)
-                for name, (fn, factor) in extras.items():
-                    if name == "sdr_loss" and speech_mask is not None:
-                        val = factor * fn(estimate, target, speech_mask=speech_mask)
-                    else:
-                        val = factor * fn(estimate, target)
-                    base[name] = val
-                    total = total + val
-                base["total"] = total
-                return base
+                def _vendored_combined(estimate: "torch.Tensor", target: "torch.Tensor") -> dict:
+                    # Dynamically ensure vendored STFT buffers match device and dtype
+                    if hasattr(vendored_fn, "stfts"):
+                        for stft in vendored_fn.stfts.values():
+                            if hasattr(stft, "w") and (stft.w.device != estimate.device or stft.w.dtype != estimate.dtype):
+                                vendored_fn.to(device=estimate.device, dtype=estimate.dtype)
+                                break
+                    base_loss = vendored_fn(estimate, target)
+                    base = {
+                        "vendored_multires_loss": base_loss,
+                        "multires_total": base_loss,
+                        "total": base_loss,
+                    }
+                    if local_snr is not None:
+                        snr_loss = local_snr(estimate, target)
+                        base["local_snr_loss"] = snr_loss
+                        base["total"] = base["total"] + snr_loss
 
-            return _vendored_combined
+                    speech_mask = _compute_speech_mask(target, config)
+                    for name, (fn, factor) in extras.items():
+                        if name == "sdr_loss" and speech_mask is not None:
+                            val = factor * fn(estimate, target, speech_mask=speech_mask)
+                        else:
+                            val = factor * fn(estimate, target)
+                        base[name] = val
+                        base["total"] = base["total"] + val
+                    return base
 
-        print("[training.losses.multires_loss] deepfilternet[train] not importable -- "
-              "using from-scratch fallback + SOTA extras.")
+                print("[training.losses.multires_loss] Using vendored df.loss.MultiResSpecLoss "
+                      "(deepfilternet[train] is installed) + SOTA extras.")
+                return _vendored_combined
+            except Exception as e:
+                warnings.warn(
+                    f"[training.losses.multires_loss] Failed initializing vendored df.loss ({e}) -- "
+                    "falling back to native pure-PyTorch implementation."
+                )
+
+        print("[training.losses.multires_loss] Using native pure-PyTorch multi-res loss + SOTA extras.")
 
     if not _TORCH_AVAILABLE:
         raise ImportError(

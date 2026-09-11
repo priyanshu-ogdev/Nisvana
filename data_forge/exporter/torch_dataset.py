@@ -50,7 +50,11 @@ class _BaseAegisShardDataset:
 
         self._wds = _require_webdataset()
         # WebDataset resolves the brace-range against files actually present.
-        self.dataset = self._wds.WebDataset(pattern, shardshuffle=(split == "train"), nodesplitter=self._wds.split_by_node)
+        self.dataset = self._wds.WebDataset(
+            pattern,
+            shardshuffle=(100 if split == "train" else False),
+            nodesplitter=self._wds.split_by_node,
+        )
 
     def __iter__(self) -> Iterator:
         return iter(self.dataset)
