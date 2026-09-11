@@ -17,6 +17,7 @@ PRIORITY ORDER:
    lookahead padding, and sequential recurrent state threading across chunks.
 """
 
+from contextlib import nullcontext
 from typing import Any, Dict, List, Optional, Tuple, Union
 import logging
 import torch
@@ -25,6 +26,40 @@ import torch.nn.functional as F
 from training.configs.base_config import BaseModelConfig
 
 logger = logging.getLogger("AEGIS.ModelLoader")
+
+
+def _run_gru_fp32(
+    gru: nn.GRU,
+    sequence: torch.Tensor,
+    hidden_state: Optional[torch.Tensor],
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Run GRU kernels outside AMP to avoid unsupported BF16 cuDNN paths.
+
+    Some CUDA/cuDNN combinations report ``CUDNN_STATUS_NOT_SUPPORTED`` for
+    otherwise contiguous BF16 GRU inputs.  The recurrent state is small
+    relative to the convolutional front/back ends, so keeping this boundary
+    in FP32 is a safe training and streaming default.  If cuDNN still
+    rejects the FP32 shape, retry only that specific operation with PyTorch's
+    native recurrent kernel.
+    """
+    sequence = sequence.float().contiguous()
+    hidden = hidden_state.float().contiguous() if hidden_state is not None else None
+    amp_off = (
+        torch.autocast(device_type="cuda", enabled=False)
+        if sequence.is_cuda
+        else nullcontext()
+    )
+    with amp_off:
+        try:
+            return gru(sequence, hidden)
+        except RuntimeError as exc:
+            if "CUDNN_STATUS_NOT_SUPPORTED" not in str(exc):
+                raise
+            logger.warning(
+                "cuDNN GRU rejected a contiguous FP32 input; using native GRU kernel."
+            )
+            with torch.backends.cudnn.flags(enabled=False):
+                return gru(sequence, hidden)
 
 
 def try_import_deepfilternet_backbone() -> Tuple[Optional[Any], bool]:
@@ -295,7 +330,7 @@ class DeepFilterNet3Wrapper(nn.Module):
             x_padded, new_input_context = self._pad_with_context(x.to(conv1_dtype), input_context, left_pad, right_pad)
             h = F.relu(self.conv1(x_padded))
             h = h.transpose(1, 2).contiguous()
-            h, new_hidden = self.gru(h.float().contiguous(), hidden_state.contiguous() if hidden_state is not None else None)
+            h, new_hidden = _run_gru_fp32(self.gru, h, hidden_state)
             h = h.transpose(1, 2).contiguous()
             h_padded, new_hidden_context = self._pad_with_context(h, hidden_context, left_pad, right_pad)
             out = self.conv2(h_padded.to(conv2_dtype)).view(orig_shape).float()
@@ -308,7 +343,7 @@ class DeepFilterNet3Wrapper(nn.Module):
             x_padded, _ = self._pad_with_context(x.to(conv1_dtype), None, left_pad, right_pad)
             h = F.relu(self.conv1(x_padded))
             h = h.transpose(1, 2).contiguous()
-            h, _ = self.gru(h.float().contiguous(), None)
+            h, _ = _run_gru_fp32(self.gru, h, None)
             h = h.transpose(1, 2).contiguous()
             h_padded, _ = self._pad_with_context(h, None, left_pad, right_pad)
             out = self.conv2(h_padded.to(conv2_dtype))
@@ -349,7 +384,7 @@ class DeepFilterNet3Wrapper(nn.Module):
                 else:
                     curr_state = curr_state.contiguous()
 
-            h_p, self.hidden_state = self.gru(h_p.float().contiguous(), curr_state)
+            h_p, self.hidden_state = _run_gru_fp32(self.gru, h_p, curr_state)
             h_p = h_p.transpose(1, 2).contiguous()
 
             h_padded_p, self._hidden_context = self._pad_with_context(
@@ -380,7 +415,7 @@ class DeepFilterNet3Wrapper(nn.Module):
             else:
                 curr_state = curr_state.contiguous()
 
-        h, self.hidden_state = self.gru(h.float().contiguous(), curr_state)
+        h, self.hidden_state = _run_gru_fp32(self.gru, h, curr_state)
         h = h.transpose(1, 2).contiguous()
         h_padded, self._hidden_context = self._pad_with_context(h, self._hidden_context, left_pad, right_pad)
         out = self.conv2(h_padded.to(conv2_dtype))
@@ -459,7 +494,7 @@ class CleanUMambaWrapper(nn.Module):
             x_padded, new_input_context = self._pad_with_context(x.to(enc_dtype), input_context, left_n)
             h = F.relu(self.enc(x_padded))
             h = h.transpose(1, 2).contiguous()
-            h, new_hidden = self.gru_mamba(h.float().contiguous(), hidden_state.contiguous() if hidden_state is not None else None)
+            h, new_hidden = _run_gru_fp32(self.gru_mamba, h, hidden_state)
             h = h.transpose(1, 2).contiguous()
             out = self.dec(h.to(dec_dtype))[..., :orig_len]
             return out.view(orig_shape).float(), new_hidden, new_input_context
@@ -470,7 +505,7 @@ class CleanUMambaWrapper(nn.Module):
             x_padded, _ = self._pad_with_context(x.to(enc_dtype), None, left_n)
             h = F.relu(self.enc(x_padded))
             h = h.transpose(1, 2).contiguous()
-            h, _ = self.gru_mamba(h.float().contiguous(), None)
+            h, _ = _run_gru_fp32(self.gru_mamba, h, None)
             h = h.transpose(1, 2).contiguous()
             out = self.dec(h.to(dec_dtype))[..., :orig_len]
             return out.view(orig_shape).float()
@@ -487,7 +522,7 @@ class CleanUMambaWrapper(nn.Module):
             else:
                 curr_state = curr_state.contiguous()
 
-        h, self.hidden_state = self.gru_mamba(h.float().contiguous(), curr_state)
+        h, self.hidden_state = _run_gru_fp32(self.gru_mamba, h, curr_state)
         h = h.transpose(1, 2).contiguous()
         out = self.dec(h.to(dec_dtype))
         out = out[..., :orig_len]
