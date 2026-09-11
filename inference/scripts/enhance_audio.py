@@ -19,6 +19,7 @@ from training.models.model_loader import build_model_for_key
 from inference.runtime.hybrid_anc import HybridAncPipeline
 from inference.runtime.audio_stream import StatefulHopProcessor
 from inference.runtime.escalation_router import AcousticEscalationRouter
+from inference.engines.onnx_model_adapter import OnnxModelAdapter, build_onnx_backed_router
 from inference.utils.audio_io import load_audio_48k, save_audio_48k
 from inference.utils.sih_metrics import evaluate_sih_compliance
 from training.utils.metrics import (
@@ -38,9 +39,15 @@ def main():
     parser.add_argument("--model", "-m", type=str, default="aegis-se-primary",
                         choices=["aegis-se-primary", "aegis-se-escalation", "aegis-se-crosscheck", "router"],
                         help="Model key to use or 'router' for dynamic acoustic escalation.")
+    parser.add_argument("--backend", choices=["pytorch", "onnx"], default="pytorch",
+                        help="Inference backend. ONNX requires exported model files.")
+    parser.add_argument("--onnx-dir", type=str, default=None,
+                        help="Directory containing <model-key>.onnx files.")
+    parser.add_argument("--onnx-provider", action="append", default=None,
+                        help="ONNX execution provider; repeat to set priority order.")
     parser.add_argument("--use-hybrid-anc", action="store_true",
                         help="Enable secondary Normalized LMS adaptive filter stage.")
-    parser.add_argument("--use-streaming", action="store_true", default=True,
+    parser.add_argument("--use-streaming", action=argparse.BooleanOptionalAction, default=True,
                         help="Use chunked streaming processing (StatefulHopProcessor -- "
                              "hop-synchronous, no windowing, correct for this project's "
                              "stateful causal models; was mislabeled 'overlap-add' before "
@@ -66,6 +73,22 @@ def main():
     print(f"Output file: {output_path}")
     print(f"Model      : {args.model}")
     print(f"Hybrid ANC : {args.use_hybrid_anc}")
+    print(f"Backend    : {args.backend}")
+
+    if args.backend == "onnx" and args.onnx_dir is None:
+        parser.error("--onnx-dir is required with --backend onnx")
+    if args.backend == "onnx" and args.checkpoint:
+        parser.error("--checkpoint applies only to the PyTorch backend")
+    onnx_dir = Path(args.onnx_dir) if args.onnx_dir else None
+
+    def onnx_path(model_key: str) -> Path:
+        path = onnx_dir / f"{model_key}.onnx"
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Missing ONNX model for {model_key}: {path}. "
+                "Export it before starting inference."
+            )
+        return path
 
     noisy_audio, sr = load_audio_48k(input_path, target_sr=48000)
     print(f"Loaded {len(noisy_audio) / sr:.2f} seconds of 48kHz audio ({len(noisy_audio)} samples)")
@@ -73,7 +96,15 @@ def main():
     t0 = time.perf_counter()
 
     if args.model == "router":
-        router = AcousticEscalationRouter()
+        if args.backend == "onnx":
+            router = build_onnx_backed_router(
+                onnx_path("aegis-se-primary"),
+                onnx_path("aegis-se-escalation"),
+                onnx_path("aegis-clf-gate"),
+                providers=args.onnx_provider,
+            )
+        else:
+            router = AcousticEscalationRouter()
         # MERGE-PASS FIX: was StreamingAudioProcessor (OLA, 50% overlap,
         # frame_size=960/hop_size=480) wrapping this router -- wrong
         # pattern for a stateful, causal model chain (see
@@ -93,8 +124,11 @@ def main():
         if len(flushed) > 0:
             enhanced = np.concatenate([enhanced, flushed])
     else:
-        model = build_model_for_key(args.model)
-        model.eval()
+        if args.backend == "onnx":
+            model = OnnxModelAdapter(onnx_path(args.model), providers=args.onnx_provider)
+        else:
+            model = build_model_for_key(args.model)
+            model.eval()
 
         if args.checkpoint and Path(args.checkpoint).exists():
             ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
