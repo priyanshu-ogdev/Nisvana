@@ -121,6 +121,7 @@ def _apply_epoch_override(config, args) -> None:
         config.total_finetune_steps = args.epochs * steps_per_epoch
     if args.num_workers is not None:
         config.num_workers = max(0, args.num_workers)
+    config.gradient_accumulation_steps = max(1, args.grad_accum)
     config.seed = args.seed
 
 
