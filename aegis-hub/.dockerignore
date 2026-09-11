@@ -1,0 +1,64 @@
+# .dockerignore — Files excluded from Docker build context
+# Keeps images lean and prevents secrets from leaking into layers.
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# Dev/test only
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+
+# Secrets — NEVER bake into image; inject via env_file at runtime
+.env
+.env.*
+*.env
+
+# Logs and runtime artifacts
+logs/
+*.log
+*.wav
+
+# Large model files — mount as volume at runtime
+models/
+
+# IDE and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+Thumbs.db
+
+# Docs and scripts (not needed at runtime)
+docs/
+scripts/
+*.md
+*.sh
+
+# TLS certs — mount as volume at runtime, never bake in
+certs/
+*.pem
+*.crt
+*.key

@@ -1,0 +1,49 @@
+# Dockerfile.node — AEGIS Mesh Node (Pi arm64 / amd64)
+#
+# Build:
+#   docker buildx build --platform linux/arm64 -t aegis-node:arm64-latest .
+#   docker buildx build --platform linux/amd64 -t aegis-node:amd64-latest .
+#   # Or multi-arch (requires ghcr.io push):
+#   bash scripts/build_multiarch.sh
+#
+# Run (Pi only — audio passthrough requires Linux /dev/snd):
+#   docker compose -f docker-compose.node.yml up -d
+#
+# NOTE: Docker Desktop on Windows/macOS cannot pass host audio devices.
+#   Pi (Linux) → node in Docker ✅
+#   Laptops (Win/Mac) → node runs NATIVELY (venv), not containerized ✅
+#   Hub → containerized anywhere (no audio needed) ✅
+
+FROM python:3.11-slim-bookworm AS base
+
+# ALSA audio + Opus codec (no GPU/torch)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libasound2 \
+        libasound2-dev \
+        alsa-utils \
+        libopus0 \
+        libopus-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Python deps (separate layer for better caching)
+COPY requirements.runtime.txt .
+RUN pip install --no-cache-dir -r requirements.runtime.txt
+
+# Copy source (models and logs are mounted as volumes at runtime)
+COPY src/ src/
+COPY config/ config/
+
+# Non-root user (audio group membership set via docker-compose group_add)
+RUN useradd --no-create-home --shell /bin/false aegis
+USER aegis
+
+# Healthcheck: WS-based ping→pong to hub (measures real mesh reachability)
+HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=3 \
+    CMD python -m src.healthcheck
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python", "-m", "src.main"]

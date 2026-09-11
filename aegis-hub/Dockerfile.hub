@@ -1,0 +1,37 @@
+# Dockerfile.hub — AEGIS Hub (no audio hardware required)
+#
+# Build:
+#   docker build -f Dockerfile.hub -t aegis-hub:latest .
+#
+# Run:
+#   docker compose -f docker-compose.hub.yml up -d
+#
+# The hub is audio-free — it routes binary frames without decoding them.
+# Safe to containerize on any platform (Linux, Mac, Windows).
+
+FROM python:3.11-slim-bookworm
+
+WORKDIR /app
+
+# Hub requirements: websockets, pydantic, psutil — nothing audio-specific
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy hub source
+COPY src/ src/
+
+# Non-root user
+RUN useradd --no-create-home --shell /bin/false aegis
+USER aegis
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+EXPOSE 8001
+
+# Hub has no WS healthcheck dependency (it IS the hub)
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import socket; s=socket.socket(); s.settimeout(3); s.connect(('127.0.0.1', 8001)); s.close()" \
+    || exit 1
+
+CMD ["python", "-m", "src.main"]

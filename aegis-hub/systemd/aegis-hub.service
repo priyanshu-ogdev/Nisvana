@@ -1,0 +1,21 @@
+[Unit]
+Description=Project AEGIS Hub Server
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/aegis-hub
+ExecStart=/home/pi/aegis-hub/venv/bin/python -m src.main
+Restart=always
+RestartSec=2
+EnvironmentFile=-/etc/aegis/hub.env
+Nice=-5
+LimitNOFILE=65536
+KillMode=mixed
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

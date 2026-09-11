@@ -1,0 +1,70 @@
+# docker-compose.node.yml — AEGIS Mesh Node (Pi Linux ONLY)
+#
+# IMPORTANT TOPOLOGY RULE:
+#   This compose file is for Raspberry Pi (Linux) ONLY.
+#   Docker Desktop on Windows/macOS CANNOT pass host audio devices.
+#   On dev laptops: run the node NATIVELY (venv), not in Docker.
+#
+# Prerequisites on Pi:
+#   1. Install Docker: curl -fsSL https://get.docker.com | sh
+#   2. Add pi user to audio group: sudo usermod -aG audio pi
+#   3. Find audio GID: getent group audio | cut -d: -f3  → set AUDIO_GID in .env.node
+#   4. Copy .env.node.example to .env.node and fill in values
+#   5. Build or pull image: docker compose -f docker-compose.node.yml build
+#
+# Start: docker compose -f docker-compose.node.yml up -d
+# Logs:  docker compose -f docker-compose.node.yml logs -f
+
+services:
+  aegis-node:
+    build:
+      context: ../aegis-backend
+      dockerfile: Dockerfile.node
+    image: aegis-node:arm64-latest
+
+    # host networking: no NAT latency; WS + ALSA discovery just work
+    # Required because ALSA needs direct access to the kernel sound system
+    network_mode: host
+
+    # ALSA passthrough — the kernel /dev/snd device tree
+    devices:
+      - "/dev/snd:/dev/snd"
+
+    # Audio group membership: must match the Pi's 'audio' GID
+    # Run: getent group audio | cut -d: -f3
+    # Set AUDIO_GID=<result> in .env.node
+    group_add:
+      - "${AUDIO_GID:-29}"
+
+    # Required for SCHED_RR real-time audio threads
+    cap_add:
+      - SYS_NICE
+
+    # Real-time priority ceiling
+    ulimits:
+      rtprio: 99
+
+    # Node identity and hub connection
+    env_file:
+      - .env.node
+
+    volumes:
+      # AI models (read-only) — build weights separately
+      - ./models:/app/models:ro
+      # Downstream audio recording (read-write)
+      - ./logs:/app/logs
+
+    restart: unless-stopped
+
+    # WS-based healthcheck: measures actual mesh reachability
+    # HEALTHCHECK_TIMEOUT_S can be overridden in .env.node
+    healthcheck:
+      test: ["CMD", "python", "-m", "src.healthcheck"]
+      interval: 10s
+      timeout: 3s
+      start_period: 15s
+      retries: 3
+
+    # Security: never use privileged: true
+    # If ALSA permissions fail, fix the GID — do not nuke isolation
+    # privileged: true   ← BANNED (bench-only exception must be labeled in runbook)

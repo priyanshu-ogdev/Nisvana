@@ -38,6 +38,63 @@
       "description": "Time spent in transport/buffering",
       "title": "Network Ms"
     },
+    "node_rtt_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Active measured socket RTT between Node and Hub in ms",
+      "title": "Node Rtt Ms"
+    },
+    "dropped_frames": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Cumulative frames dropped due to queue saturation",
+      "title": "Dropped Frames"
+    },
+    "queue_depth": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Current depth of outbound queue",
+      "title": "Queue Depth"
+    },
+    "link_quality": {
+      "anyOf": [
+        {
+          "enum": [
+            "healthy",
+            "degraded",
+            "disconnected"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": "healthy",
+      "description": "Link quality state",
+      "title": "Link Quality"
+    },
     "snr_improvement_db": {
       "description": "Estimated SNR delta dB",
       "title": "Snr Improvement Db",

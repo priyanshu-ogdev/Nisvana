@@ -1,0 +1,25 @@
+# requirements.runtime.txt — Lean node runtime (NO torch, NO dev tools)
+# Used by Dockerfile.node for the Pi container image.
+# Keep this in sync with the Pi-specific section in aegis-backend/requirements.txt
+
+# Core networking + protocol
+websockets>=13.0
+pydantic>=2.7
+
+# Audio + signal processing
+numpy>=1.26
+sounddevice>=0.4.6
+soundfile>=0.12
+noisereduce>=3.0
+scipy>=1.13
+
+# AI inference (CPU; ONNX only — no torch in the container)
+onnxruntime>=1.18
+
+# Codec (optional Opus; PCM fallback if absent)
+opuslib>=0.1.0
+
+# System + config
+python-dotenv>=1.0
+pyyaml>=6.0
+psutil>=5.9

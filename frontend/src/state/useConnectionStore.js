@@ -27,6 +27,10 @@ export const useConnectionStore = create((set, get) => ({
     latency_ms: null,
     inference_ms: null,
     network_ms: null,
+    node_rtt_ms: null,
+    dropped_frames: 0,
+    queue_depth: 0,
+    link_quality: 'healthy',
     snr_improvement_db: null,
     model: null,
     pi_cpu_temp: null,
@@ -115,30 +119,51 @@ export const useConnectionStore = create((set, get) => ({
   },
 
   _processBinaryMessage: (buffer) => {
-      // P1: Binary framing format:
-      // <BB + len(node_id_bytes)s + Q + 64B + 64B
+      // Wire framing format:
+      // Byte 0: frame_type (1 = FFT Stream, 2 = Raw Audio Passthrough, 3 = HW Health)
+      // Byte 1: node_id length (L)
+      // Bytes 2..2+L-1: node_id (utf-8)
+      // Bytes 2+L..2+L+7: timestamp_ms (uint64, little endian)
+      // Remaining bytes: Frame payload
       if (!buffer || buffer.byteLength < 2) return;
       const view = new DataView(buffer);
       const frame_type = view.getUint8(0);
+      const id_len = view.getUint8(1);
+      const header_len = 2 + id_len + 8;
+      if (buffer.byteLength < header_len) return;
+
+      const decoder = new TextDecoder('utf-8');
+      const id_bytes = new Uint8Array(buffer, 2, id_len);
+      const node_id = decoder.decode(id_bytes);
+      const timestamp_ms = Number(view.getBigUint64(2 + id_len, true));
+
       if (frame_type === 1) {
-          const id_len = view.getUint8(1);
-          if (buffer.byteLength < 2 + id_len + 8 + 128) return;
-          const decoder = new TextDecoder('utf-8');
-          const id_bytes = new Uint8Array(buffer, 2, id_len);
-          const node_id = decoder.decode(id_bytes);
-          
-          let offset = 2 + id_len + 8; // skip timestamp
-          
+          // FRAME_TYPE_FFT: 64B raw + 64B enhanced
+          if (buffer.byteLength < header_len + 128) return;
           if (!fftStreams[node_id]) {
               fftStreams[node_id] = { enhanced: new Uint8Array(64), raw: new Uint8Array(64) };
           }
-          
-          const raw = new Uint8Array(buffer, offset, 64);
-          const enhanced = new Uint8Array(buffer, offset + 64, 64);
-          
+          const raw = new Uint8Array(buffer, header_len, 64);
+          const enhanced = new Uint8Array(buffer, header_len + 64, 64);
           for (let i = 0; i < 64; i++) {
               fftStreams[node_id].raw[i] = raw[i];
               fftStreams[node_id].enhanced[i] = enhanced[i];
+          }
+      } else if (frame_type === 2) {
+          // FRAME_TYPE_AUDIO: raw 16-bit PCM audio passthrough
+          const audioData = buffer.slice(header_len);
+          if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('aegis-audio-frame', {
+                  detail: { nodeId: node_id, timestamp: timestamp_ms, audio: audioData }
+              }));
+          }
+      } else if (frame_type === 3) {
+          // FRAME_TYPE_HEALTH: high-rate HW health telemetry
+          const healthData = buffer.slice(header_len);
+          if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('aegis-health-frame', {
+                  detail: { nodeId: node_id, timestamp: timestamp_ms, payload: healthData }
+              }));
           }
       }
   },
@@ -181,6 +206,10 @@ export const useConnectionStore = create((set, get) => ({
           set({ rtt_ms: Math.max(0, rtt) });
        }
     }
+    else if (msg.type === 'subscription_ack') {
+       // Confirmation from Hub of targeted dashboard subscriptions
+       console.log('Subscriptions confirmed:', msg.nodes);
+    }
     else if (msg.type === 'handshake_ack') {
        const clientId = msg.clientId || msg.node_id;
        window._aegisShockwave = { x: 0, y: 0, strength: 15.0 };
@@ -219,6 +248,10 @@ export const useConnectionStore = create((set, get) => ({
           latency_ms: msg.latency_ms,
           inference_ms: msg.inference_ms ?? null,
           network_ms: netMs,
+          node_rtt_ms: msg.node_rtt_ms ?? null,
+          dropped_frames: msg.dropped_frames ?? 0,
+          queue_depth: msg.queue_depth ?? 0,
+          link_quality: msg.link_quality ?? 'healthy',
           snr_improvement_db: msg.snr_improvement_db,
           model: msg.model,
           pi_cpu_temp: msg.pi_cpu_temp ?? null,
@@ -230,6 +263,13 @@ export const useConnectionStore = create((set, get) => ({
        if (msg.state === 'streaming') {
            get()._evalGlobalState(true);
        }
+    }
+  },
+
+  subscribeToNodes: (nodes) => {
+    const { ws } = get();
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'subscribe', nodes }));
     }
   },
 
@@ -349,6 +389,10 @@ export const useConnectionStore = create((set, get) => ({
          latency_ms: 8.4,
          inference_ms: 6.2,
          network_ms: 2.2,
+         node_rtt_ms: 3.2,
+         dropped_frames: 0,
+         queue_depth: 0,
+         link_quality: 'healthy',
          snr_improvement_db: 14.8,
          model: 'DeepFilterNet3',
          pi_cpu_temp: 48.2,

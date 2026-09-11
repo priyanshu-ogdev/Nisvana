@@ -1,0 +1,66 @@
+# node_config.yaml — Mesh Node Routing Configuration
+#
+# This file replaces hardware.yaml for mesh-mode operation.
+# All values can be overridden by environment variables (env takes priority).
+#
+# Usage:
+#   NODE_ID env var overrides node_id
+#   HUB_WS_URL env var overrides hub.ws_url
+#   AUDIO_INPUT_INDEX / AUDIO_OUTPUT_INDEX override audio.input/output device_index
+
+# ------------------------------------------------------------------
+# Node Identity
+# ------------------------------------------------------------------
+node_id: operator-1               # overridden by NODE_ID env var
+capabilities:
+  - mic
+  - speaker
+
+# ------------------------------------------------------------------
+# Hub Connection
+# ------------------------------------------------------------------
+hub:
+  ws_url: ws://192.168.1.100:8001/node   # overridden by HUB_WS_URL env var
+  reconnect_delay_s: 1.0
+  reconnect_delay_max_s: 10.0
+  ping_interval_s: 1.0
+  pong_timeout_s: 3.0
+
+# ------------------------------------------------------------------
+# Audio I/O
+# ------------------------------------------------------------------
+audio:
+  sample_rate: 48000
+  frame_size: 480               # 10ms at 48kHz
+
+  input:
+    device_index: 0             # overridden by AUDIO_INPUT_INDEX env var
+    label: "Primary Mic (USB)"
+    channels: 1
+
+  output:
+    device_index: 1             # overridden by AUDIO_OUTPUT_INDEX env var
+    label: "Headset Output (USB)"
+    channels: 1
+
+# ------------------------------------------------------------------
+# Jitter Buffer (Downstream Playback)
+# ------------------------------------------------------------------
+playback:
+  target_delay_ms: 20           # minimum latency before playing
+  max_queue_frames: 50          # 500ms buffer; older frames are dropped (drop-oldest)
+
+# ------------------------------------------------------------------
+# Codec
+# ------------------------------------------------------------------
+codec:
+  preferred: pcm                # "pcm" or "opus" (opus requires libopus C library)
+  pcm_dtype: int16              # int16 = 2 bytes/sample → 960 bytes per 10ms frame
+
+# ------------------------------------------------------------------
+# Logging / Recording
+# ------------------------------------------------------------------
+logging:
+  log_dir: logs/
+  record_downstream: true       # write mesh_audio_<NODE_ID>.wav
+  flush_interval_frames: 100    # flush WAV every ~1s (100 × 10ms frames)

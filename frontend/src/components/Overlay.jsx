@@ -9,6 +9,9 @@ export function Overlay() {
     if (isSimulated || globalState === GLOBAL_STATES.OFFLINE) {
         return { text: 'OFFLINE / SIMULATED DEMO', color: 'text-[var(--amber)]', dot: 'bg-[var(--amber)] animate-pulse', icon: <AlertTriangle size={14} className="mr-2" /> };
     }
+    if (telemetry.link_quality === 'degraded') {
+        return { text: 'LINK DEGRADED (HIGH JITTER)', color: 'text-[var(--amber)]', dot: 'bg-[var(--amber)] animate-ping', icon: <AlertTriangle size={14} className="mr-2" /> };
+    }
     switch (globalState) {
         case GLOBAL_STATES.NO_LINK: return { text: 'HUB REACHED — NO NODES', color: 'text-[var(--text-low)]', dot: 'bg-[var(--text-low)]', icon: <Radio size={14} className="mr-2" /> };
         case GLOBAL_STATES.PARTIAL_LINK: return { text: 'NODES PENDING HANDSHAKE', color: 'text-[var(--amber)]', dot: 'bg-[var(--amber)] animate-pulse', icon: <Zap size={14} className="mr-2" /> };
@@ -87,8 +90,20 @@ export function Overlay() {
 
       {/* TELEMETRY BAR */}
       <div className="w-full flex justify-center mb-[32px]">
-         <div className="h-[64px] bg-[var(--panel)] backdrop-blur-xl border border-[var(--panel-border)] rounded-2xl flex items-center px-8 space-x-6 shadow-[0_4px_30px_rgba(0,0,0,0.5)]">
-             <TelemetryCell label="RTT" value={rtt_ms != null ? `${rtt_ms.toFixed(0)} ms` : '—'} color={rtt_ms != null ? "text-[var(--mint)]" : "text-[var(--text-low)]"} />
+         <div className="h-[64px] bg-[var(--panel)] backdrop-blur-xl border border-[var(--panel-border)] rounded-2xl flex items-center px-6 space-x-4 shadow-[0_4px_30px_rgba(0,0,0,0.5)]">
+             <TelemetryCell label="DASH RTT" value={rtt_ms != null ? `${rtt_ms.toFixed(0)} ms` : '—'} color={rtt_ms != null ? "text-[var(--mint)]" : "text-[var(--text-low)]"} />
+             <div className="w-px h-8 bg-white/10" />
+             <TelemetryCell 
+               label="NODE RTT" 
+               value={telemetry.node_rtt_ms != null ? `${telemetry.node_rtt_ms.toFixed(1)} ms` : '—'} 
+               color={telemetry.link_quality === 'degraded' ? "text-[var(--amber)]" : (telemetry.node_rtt_ms != null ? "text-[var(--mint)]" : "text-[var(--text-low)]")} 
+             />
+             <div className="w-px h-8 bg-white/10" />
+             <TelemetryCell 
+               label="DROPPED" 
+               value={telemetry.dropped_frames != null ? `${telemetry.dropped_frames}` : '0'} 
+               color={telemetry.dropped_frames > 0 ? "text-[var(--rose)] font-bold" : "text-[var(--text-low)]"} 
+             />
              <div className="w-px h-8 bg-white/10" />
              <TelemetryCell label="NETWORK" value={telemetry.network_ms != null ? `${telemetry.network_ms.toFixed(1)} ms` : '—'} color="text-[var(--cyan)]" />
              <div className="w-px h-8 bg-white/10" />
@@ -111,7 +126,7 @@ export function Overlay() {
 
 function TelemetryCell({ label, value, color = "text-[var(--text-hi)]" }) {
   return (
-    <div className="flex flex-col items-center min-w-[72px]">
+    <div className="flex flex-col items-center min-w-[62px]">
       <div className="text-[9px] text-[var(--text-low)] font-bold tracking-[0.2em] mb-1">{label}</div>
       <div className={`font-mono text-xs ${color}`}>{value}</div>
     </div>

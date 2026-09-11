@@ -8,9 +8,12 @@ python-dotenv>=1.0
 pyyaml>=6.0
 scipy>=1.13
 
+# Phase 1 Mesh additions
+soundfile>=0.12       # WAV recorder (MeshRecorder); stdlib wave used as fallback if unavailable
+opuslib>=0.1.0        # Optional Opus codec; auto-detected by AudioCodec (PCM fallback if absent)
+
 # Pi-only (comment out on non-Pi dev machines)
 # sounddevice>=0.4.6
-# soundfile>=0.12
 # onnxruntime>=1.18
 
 # Dev / test

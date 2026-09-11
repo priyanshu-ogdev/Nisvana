@@ -12,13 +12,20 @@ into `frontend_schemas/` for parity testing.
 
 DO NOT change field names, types, or optionality without updating
 `frontend/src/state/useConnectionStore.js` and re-running parity tests.
+
+# Phase 1 — Mesh additions:
+#   FRAME_TYPE_MESH_AUDIO (0x02): binary wire type for node↔hub audio
+#   MeshAudioFrame: parsed representation of inbound binary mesh frames
+#   NodeHello / MeshRoute: JSON control messages for mesh handshake & routing
 """
 
 from __future__ import annotations
+from dataclasses import dataclass
 from typing import Literal, Optional, List, Union
 from pydantic import BaseModel, Field
 import json
 import sys
+import numpy as np
 
 
 # ===========================================================================
@@ -111,12 +118,43 @@ class AncState(BaseModel):
     sidetone_on: bool
 
 
+# Frame Type Constants for Binary Wire Protocol
+FRAME_TYPE_FFT = 1
+FRAME_TYPE_AUDIO = 2           # legacy single-node audio (kept for backward compat)
+FRAME_TYPE_HEALTH = 3
+FRAME_TYPE_MESH_AUDIO = 0x02   # Phase 1: Mesh bidirectional audio (same value as AUDIO; mesh client uses seq)
+
+
+@dataclass
+class MeshAudioFrame:
+    """Parsed representation of an inbound binary mesh audio frame.
+
+    Wire layout (big-endian, per Phase 1 spec):
+      Byte 0:           frame_type (0x02)
+      Byte 1:           source node_id length L
+      Bytes 2..2+L:     source node_id (UTF-8)
+      Bytes 2+L..10+L:  timestamp_ms (uint64)
+      Bytes 10+L..14+L: seq (uint32)
+      Remaining:        audio payload (PCM int16 or Opus bytes)
+    """
+    source_node_id: str
+    timestamp_ms: int
+    seq: int
+    payload: bytes
+    # Decoded PCM — populated by codec after parsing
+    pcm: Optional[np.ndarray] = None
+
+
 class Telemetry(BaseModel):
     """System performance telemetry, broadcast at 1Hz."""
     type: Literal["telemetry"] = "telemetry"
     latency_ms: float = Field(..., description="Legacy end-to-end latency")
     inference_ms: Optional[float] = Field(None, description="Time spent in ONNX inference")
     network_ms: Optional[float] = Field(None, description="Time spent in transport/buffering")
+    node_rtt_ms: Optional[float] = Field(None, description="Active measured socket RTT between Node and Hub in ms")
+    dropped_frames: Optional[int] = Field(None, description="Cumulative frames dropped due to queue saturation")
+    queue_depth: Optional[int] = Field(None, description="Current depth of outbound queue")
+    link_quality: Optional[Literal["healthy", "degraded", "disconnected"]] = Field("healthy", description="Link quality state")
     snr_improvement_db: float = Field(..., description="Estimated SNR delta dB")
     model: str = Field(..., description="Currently active AI model name")
     platform: Literal["pi5"] = "pi5"
@@ -151,6 +189,26 @@ OutgoingMessage = Union[
 
 
 # ===========================================================================
+# MESH CONTROL MESSAGES (Phase 1)
+# ===========================================================================
+
+class NodeHello(BaseModel):
+    """Sent by a node to Hub on boot (and on hardware change)."""
+    type: Literal["node_hello"] = "node_hello"
+    node_id: str = Field(..., description="Unique mesh node identifier")
+    token: Optional[str] = Field(None, description="Pre-shared auth token")
+    capabilities: List[str] = Field(default_factory=lambda: ["mic", "speaker"])
+    hw: dict = Field(default_factory=dict, description="Hardware status snapshot")
+
+
+class MeshRoute(BaseModel):
+    """Sent by Hub to a node to subscribe/unsubscribe from an audio source."""
+    type: Literal["mesh_route"] = "mesh_route"
+    source: str = Field(..., description="Source node_id whose audio to route")
+    action: Literal["subscribe", "unsubscribe"] = "subscribe"
+
+
+# ===========================================================================
 # SCHEMA EXPORT (run as __main__ to generate frontend_schemas/)
 # ===========================================================================
 
@@ -166,6 +224,13 @@ _MESSAGE_REGISTRY = {
     "Telemetry": Telemetry,
     "LinkStatus": LinkStatus,
     "Pong": Pong,
+}
+
+# Mesh-only messages (node ↔ hub). NOT part of the frontend contract.
+# Not checked by test_protocol_parity.py::test_all_schemas_exported.
+MESH_MESSAGE_REGISTRY = {
+    "NodeHello": NodeHello,
+    "MeshRoute": MeshRoute,
 }
 
 
