@@ -221,6 +221,13 @@ class Orchestrator:
                 # Split latency: report measured inference time and network/buffering time
                 tel["inference_ms"] = round(self._last_infer_ms, 2)
                 tel["network_ms"] = round(max(0.0, tel["latency_ms"] - tel["inference_ms"]), 2)
+
+                # Link health and queue telemetry
+                stats = self._client.get_stats()
+                tel["node_rtt_ms"] = stats.get("node_rtt_ms")
+                tel["dropped_frames"] = stats.get("dropped_frames")
+                tel["queue_depth"] = stats.get("queue_depth")
+                tel["link_state"] = stats.get("link_state")
                 
                 if self._fusion:
                     tel["snr_state"] = self._fusion.snr_state

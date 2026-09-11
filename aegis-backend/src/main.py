@@ -151,11 +151,18 @@ async def main() -> None:
     from .ws.protocol import HwStatus
     from .orchestrator import Orchestrator
 
-    # Read node identity from env (or generate one)
+    # Read node identity and credentials from env
     node_id = os.getenv("AEGIS_NODE_ID", "pi-demo")
     hub_url = os.getenv("AEGIS_HUB_URL", "ws://127.0.0.1:8001/node")
+    auth_token = os.getenv("AEGIS_AUTH_TOKEN")
+    dev_mode = os.getenv("AEGIS_DEV_MODE", "0").strip().lower() in ("1", "true", "yes")
 
-    client = AegisClient(hub_url=hub_url, node_id=node_id)
+    client = AegisClient(
+        hub_url=hub_url,
+        node_id=node_id,
+        auth_token=auth_token,
+        dev_mode=dev_mode,
+    )
 
     async def on_hw_change(status_dict: dict) -> None:
         hw = HwStatus(**status_dict)

@@ -111,12 +111,22 @@ class AncState(BaseModel):
     sidetone_on: bool
 
 
+# Binary Wire Frame Type Identifiers
+FRAME_TYPE_FFT = 1
+FRAME_TYPE_AUDIO = 2
+FRAME_TYPE_HEALTH = 3
+
+
 class Telemetry(BaseModel):
     """System performance telemetry, broadcast at 1Hz."""
     type: Literal["telemetry"] = "telemetry"
     latency_ms: float = Field(..., description="Legacy end-to-end latency")
     inference_ms: Optional[float] = Field(None, description="Time spent in ONNX inference")
     network_ms: Optional[float] = Field(None, description="Time spent in transport/buffering")
+    node_rtt_ms: Optional[float] = Field(None, description="Active measured socket RTT between Node and Hub in ms")
+    dropped_frames: Optional[int] = Field(None, description="Cumulative frames dropped due to queue saturation")
+    queue_depth: Optional[int] = Field(None, description="Current depth of outbound queue")
+    link_state: Optional[str] = Field(None, description="Link health state: online | degraded | offline")
     snr_improvement_db: float = Field(..., description="Estimated SNR delta dB")
     model: str = Field(..., description="Currently active AI model name")
     platform: Literal["pi5"] = "pi5"
