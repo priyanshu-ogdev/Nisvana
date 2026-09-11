@@ -49,11 +49,13 @@ class _BaseAegisShardDataset(_IterableDatasetBase):
         self.sample_weight_fn: Optional[Callable[[dict], float]] = None
         self._sampling_seed = 1337
 
-        # Check if split-specific shards exist (e.g. se-train-*.tar, se-val-*.tar, se-gentest-*.tar)
-        split_tag = (
-            "test_generalization"
+        # Generalization exports historically used ``gentest`` while the
+        # canonical data-forge split is ``test_generalization``.  Accept both
+        # exact tags, but never fall back to unrelated shards.
+        split_tags = (
+            ("test_generalization", "gentest", "test")
             if split in ("test", "gentest", "test_generalization")
-            else split
+            else (split,)
         )
         branch_subname = "speech_enhancement" if shard_prefix == "se" else ("classifier" if shard_prefix == "clf" else "aec")
         candidates = [
@@ -67,11 +69,13 @@ class _BaseAegisShardDataset(_IterableDatasetBase):
         found_shards = []
         for cand in candidates:
             if cand and cand.exists() and cand.is_dir():
-                m = sorted(list(cand.glob(f"{shard_prefix}-{split_tag}-*.tar")))
-                if not m and split != "train":
-                    m = sorted(list(cand.glob(f"{shard_prefix}-*{split}*.tar")))
-                if not m:
-                    m = sorted(list(cand.glob(f"{shard_prefix}-*.tar")))
+                m = sorted(
+                    {
+                        path
+                        for tag in split_tags
+                        for path in cand.glob(f"{shard_prefix}-{tag}-*.tar")
+                    }
+                )
                 if m:
                     self.shard_dir = cand
                     found_shards = m
@@ -82,7 +86,8 @@ class _BaseAegisShardDataset(_IterableDatasetBase):
         else:
             raise FileNotFoundError(
                 f"No shards found for split={split!r} under {self.shard_dir}. "
-                f"Expected {shard_prefix}-{split_tag}-*.tar; refusing to fall back "
+                f"Expected one of {', '.join(f'{shard_prefix}-{tag}-*.tar' for tag in split_tags)}; "
+                "refusing to fall back "
                 "to another split."
             )
 

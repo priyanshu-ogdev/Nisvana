@@ -20,6 +20,11 @@ SPLIT_ALIASES = {
     "test": "test_generalization",
     "test_generalization": "test_generalization",
 }
+SPLIT_TAGS = {
+    "train": ("train",),
+    "val": ("val",),
+    "test_generalization": ("test_generalization", "gentest", "test"),
+}
 VALID_SPLITS = frozenset(SPLIT_ALIASES)
 
 
@@ -35,13 +40,13 @@ def find_split_shards(shard_dir: Path, split: str) -> List[Path]:
     root = Path(shard_dir)
     if not root.exists():
         return []
+    tags = SPLIT_TAGS[canonical_split]
     return sorted(
-        path for path in root.rglob("*.tar")
-        if (
-            f"-{canonical_split}-" in path.stem
-            or path.stem.endswith(f"-{canonical_split}")
-            or f"-{split}-" in path.stem
-            or path.stem.endswith(f"-{split}")
+        path
+        for path in root.rglob("*.tar")
+        if any(
+            f"-{tag}-" in path.stem or path.stem.endswith(f"-{tag}")
+            for tag in tags
         )
     )
 
