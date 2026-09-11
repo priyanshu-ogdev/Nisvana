@@ -26,6 +26,8 @@ data/splits/*
 data/forge/*
 data/shards/*
 data/checkpoints/*
+training/checkpoints/*
+*.pt
 data/eval_reports/*
 data/onnx_models/*
 data/manifests/fetch_manifest.json

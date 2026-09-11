@@ -301,7 +301,20 @@ class DeepFilterNet3Wrapper(nn.Module):
             out = self.conv2(h_padded.to(conv2_dtype)).view(orig_shape).float()
             return out, new_hidden, new_input_context, new_hidden_context
 
-        # Internal-state mode with output-delay buffering for lookahead models.
+        # Full-clip batch training mode: each batch contains independent audio clips (length >= 2048).
+        # Convolutions naturally observe future context within the same clip.
+        # No cross-batch state or pending delay buffer is maintained.
+        if self.training and x.shape[-1] >= 2048:
+            x_padded, _ = self._pad_with_context(x.to(conv1_dtype), None, left_pad, right_pad)
+            h = F.relu(self.conv1(x_padded))
+            h = h.transpose(1, 2)
+            h, _ = self.gru(h.float(), None)
+            h = h.transpose(1, 2)
+            h_padded, _ = self._pad_with_context(h, None, left_pad, right_pad)
+            out = self.conv2(h_padded.to(conv2_dtype))
+            return out.view(orig_shape).float()
+
+        # Internal-state mode with output-delay buffering for lookahead streaming models.
         #
         # When _has_lookahead is True (conv_lookahead > 0, i.e. Model 2):
         #   1. Use the current chunk's leading samples as RIGHT-context for
@@ -337,13 +350,6 @@ class DeepFilterNet3Wrapper(nn.Module):
             h_p, self.hidden_state = self.gru(h_p.float(), curr_state)
             h_p = h_p.transpose(1, 2)
 
-            # For conv2's right-pad, we'd need the GRU output from the current
-            # chunk as right-context — but we haven't processed it yet. Use the
-            # leading edge of h_p as an approximation (the GRU's own hidden
-            # state threading ensures continuity across chunks, so the first few
-            # hidden features of the current chunk are well-predicted by the
-            # state h_p left in self.hidden_state — this is a sub-sample-level
-            # approximation, not a chunk-level one).
             h_padded_p, self._hidden_context = self._pad_with_context(
                 h_p, self._hidden_context, left_pad, right_pad,
             )
@@ -454,7 +460,18 @@ class CleanUMambaWrapper(nn.Module):
             out = self.dec(h.to(dec_dtype))[..., :orig_len]
             return out.view(orig_shape).float(), new_hidden, new_input_context
 
-        # Internal-state mode
+        # Full-clip batch training mode: each batch contains independent audio clips (length >= 2048).
+        # No cross-batch state or memory leakage.
+        if self.training and x.shape[-1] >= 2048:
+            x_padded, _ = self._pad_with_context(x.to(enc_dtype), None, left_n)
+            h = F.relu(self.enc(x_padded))
+            h = h.transpose(1, 2)
+            h, _ = self.gru_mamba(h.float(), None)
+            h = h.transpose(1, 2)
+            out = self.dec(h.to(dec_dtype))[..., :orig_len]
+            return out.view(orig_shape).float()
+
+        # Internal-state mode for streaming
         x_padded, self._input_context = self._pad_with_context(x.to(enc_dtype), self._input_context, left_n)
         h = F.relu(self.enc(x_padded))
         h = h.transpose(1, 2)
@@ -494,6 +511,8 @@ class AudioClassifierNet(nn.Module):
             x = x.unsqueeze(0).unsqueeze(0)
         elif x.dim() == 2:
             x = x.unsqueeze(1)
+        elif x.dim() > 3:
+            x = x.reshape(-1, 1, x.shape[-1])
         feat = self.features(x).squeeze(-1)
         return self.fc(feat)
 
@@ -511,6 +530,10 @@ class AecFilterNet(nn.Module):
             mic = mic.unsqueeze(0)
         if farend.dim() == 1:
             farend = farend.unsqueeze(0)
+        if mic.shape[-1] != farend.shape[-1]:
+            min_len = min(mic.shape[-1], farend.shape[-1])
+            mic = mic[..., :min_len]
+            farend = farend[..., :min_len]
         x = torch.stack([mic, farend], dim=1)
         echo_est = self.filter(x).squeeze(1)
         return mic - echo_est
@@ -526,7 +549,13 @@ def build_model_for_key(model_key: str, config: Optional[BaseModelConfig] = None
             try:
                 return real_df(df_lookahead=0)
             except Exception:
-                pass
+                try:
+                    import df.model as df_model
+                    p = df_model.ModelParams()
+                    p.df_lookahead = 0
+                    return real_df(p)
+                except Exception:
+                    pass
         lookahead = getattr(config, "df_lookahead", 0)
         return DeepFilterNet3Wrapper(df_lookahead=lookahead, conv_lookahead=0)
     elif model_key == "aegis-se-escalation":
@@ -535,7 +564,13 @@ def build_model_for_key(model_key: str, config: Optional[BaseModelConfig] = None
             try:
                 return real_df(df_lookahead=2)
             except Exception:
-                pass
+                try:
+                    import df.model as df_model
+                    p = df_model.ModelParams()
+                    p.df_lookahead = 2
+                    return real_df(p)
+                except Exception:
+                    pass
         lookahead = getattr(config, "df_lookahead", 2)
         return DeepFilterNet3Wrapper(df_lookahead=lookahead, conv_lookahead=2)
     elif model_key == "aegis-se-crosscheck":

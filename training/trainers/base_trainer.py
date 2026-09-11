@@ -315,45 +315,75 @@ class BaseTrainer(ABC):
     def should_checkpoint(self) -> bool:
         return self.step > 0 and self.step % self.config.checkpoint_every_n_steps == 0
 
-    def run_training_loop(self, batches: Any, val_batches: Optional[Any] = None) -> Dict[str, Any]:
+    def run_training_loop(
+        self,
+        batches: Any,
+        val_batches: Optional[Any] = None,
+        epochs: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """
-        Executes a sequence of training steps, evaluating and checkpointing
-        according to the configured cadence, with early stopping guard.
+        Executes training steps across epochs (or a single pass if epochs=None/1),
+        evaluating and checkpointing according to the configured cadence, with early stopping guard.
         """
         step_records = []
         checkpoints_saved = []
         early_stopped = False
+        num_epochs = epochs if (epochs is not None and epochs > 0) else 1
 
-        for batch in batches:
-            loss_dict = self.training_step(batch)
-            self.step += 1
-            step_records.append(loss_dict)
+        for epoch in range(num_epochs):
+            for batch in batches:
+                loss_dict = self.training_step(batch)
+                self.step += 1
+                step_records.append(loss_dict)
 
-            if self.should_eval() and val_batches:
-                eval_metrics = {}
-                val_list = list(val_batches) if not isinstance(val_batches, list) else val_batches
-                for v_batch in val_list:
-                    m = self.eval_step(v_batch)
-                    for k, v in m.items():
-                        eval_metrics[k] = eval_metrics.get(k, 0.0) + v / max(len(val_list), 1)
+                # Periodic progress logging (e.g. every log_every_n_steps)
+                log_every = getattr(self.config, "log_every_n_steps", 100)
+                if self.step % log_every == 0 or self.step == 1:
+                    loss_val = loss_dict.get("total") or loss_dict.get("loss", 0.0)
+                    if hasattr(loss_val, "item"):
+                        loss_val = loss_val.item()
+                    metrics_str = f"loss: {loss_val:.4f}"
+                    if "accuracy" in loss_dict:
+                        metrics_str += f" | acc: {loss_dict['accuracy']:.4f}"
+                    print(f"[{self.config.model_key}] Epoch {epoch + 1}/{num_epochs} | Step {self.step} | {metrics_str}")
 
-                if self.should_checkpoint():
-                    saved = self.save_checkpoint(
-                        model_state={"step": self.step},
-                        metrics=eval_metrics,
-                    )
+                if self.should_eval() and val_batches:
+                    eval_metrics = {}
+                    total_v_batches = 0
+                    max_eval = getattr(self.config, "max_eval_steps", 100)
+                    for v_batch in val_batches:
+                        m = self.eval_step(v_batch)
+                        for k, v in m.items():
+                            eval_metrics[k] = eval_metrics.get(k, 0.0) + v
+                        total_v_batches += 1
+                        if total_v_batches >= max_eval:
+                            break
+
+                    if total_v_batches > 0:
+                        for k in eval_metrics:
+                            eval_metrics[k] /= total_v_batches
+
+                    if self.should_checkpoint():
+                        saved = self.save_checkpoint(
+                            model_state={"step": self.step},
+                            metrics=eval_metrics,
+                        )
+                        if saved:
+                            checkpoints_saved.append(saved)
+                            self.patience_counter = 0
+                        else:
+                            self.patience_counter += 1
+                            if self.patience_counter >= self.early_stopping_patience:
+                                early_stopped = True
+                                break
+                elif self.should_checkpoint():
+                    saved = self.save_checkpoint(model_state={"step": self.step})
                     if saved:
                         checkpoints_saved.append(saved)
-                        self.patience_counter = 0
-                    else:
-                        self.patience_counter += 1
-                        if self.patience_counter >= self.early_stopping_patience:
-                            early_stopped = True
-                            break
-            elif self.should_checkpoint():
-                saved = self.save_checkpoint(model_state={"step": self.step})
-                if saved:
-                    checkpoints_saved.append(saved)
+
+            if early_stopped:
+                print(f"[{self.config.model_key}] Early stopping triggered at epoch {epoch + 1}, step {self.step}.")
+                break
 
         return {
             "total_steps": self.step,

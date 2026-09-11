@@ -92,6 +92,223 @@ def parse_args():
     return parser.parse_args()
 
 
+def se_collate_fn(batch):
+    if not batch:
+        return {}
+    import io, numpy as np, soundfile as sf
+    cleaned = []
+    for sample in batch:
+        s = {}
+        for k in ("noisy.wav", "clean.wav", "rir.wav", "noisy", "clean"):
+            v = sample.get(k)
+            if v is None:
+                continue
+            if isinstance(v, (bytes, bytearray)):
+                try:
+                    v, _ = sf.read(io.BytesIO(v), dtype="float32")
+                except Exception:
+                    continue
+            if isinstance(v, np.ndarray):
+                v = torch.from_numpy(v.copy())
+            elif not isinstance(v, torch.Tensor):
+                v = torch.tensor(v, dtype=torch.float32)
+            v = v.squeeze()
+            if v.ndim > 1:
+                if v.shape[0] <= 8 and v.shape[-1] > v.shape[0]:
+                    v = v.mean(dim=0)
+                else:
+                    v = v.mean(dim=-1)
+            v = torch.atleast_1d(v)
+            s[k] = v
+        cleaned.append((s, sample.get("json", {})))
+
+    max_len = 2048
+    for s, _ in cleaned:
+        for k in ("noisy.wav", "clean.wav", "noisy", "clean"):
+            if k in s and isinstance(s[k], torch.Tensor):
+                max_len = max(max_len, s[k].shape[-1])
+    max_len = min(max_len, 192000)
+
+    batch_noisy, batch_clean, batch_json = [], [], []
+    for s, meta in cleaned:
+        noisy = s.get("noisy.wav", s.get("noisy"))
+        clean = s.get("clean.wav", s.get("clean"))
+        if noisy is None or clean is None:
+            continue
+        if noisy.shape[-1] > max_len:
+            noisy = noisy[:max_len]
+        elif noisy.shape[-1] < max_len:
+            noisy = torch.nn.functional.pad(noisy, (0, max_len - noisy.shape[-1]))
+        if clean.shape[-1] > max_len:
+            clean = clean[:max_len]
+        elif clean.shape[-1] < max_len:
+            clean = torch.nn.functional.pad(clean, (0, max_len - clean.shape[-1]))
+        batch_noisy.append(noisy)
+        batch_clean.append(clean)
+        batch_json.append(meta)
+
+    if not batch_noisy:
+        return {}
+    stacked_noisy = torch.stack(batch_noisy, dim=0)
+    stacked_clean = torch.stack(batch_clean, dim=0)
+    return {
+        "noisy.wav": stacked_noisy,
+        "clean.wav": stacked_clean,
+        "noisy": stacked_noisy,
+        "clean": stacked_clean,
+        "json": batch_json,
+    }
+
+
+def clf_collate_fn(batch):
+    if not batch:
+        return {}
+    import io, json, numpy as np, soundfile as sf
+    target_len = 9600
+    batch_wav, batch_label, batch_json = [], [], []
+
+    for sample in batch:
+        audio = sample.get("wav")
+        if audio is None:
+            audio = sample.get("wav.wav")
+        if audio is None:
+            audio = sample.get("audio")
+        if audio is None:
+            continue
+        if isinstance(audio, (bytes, bytearray)):
+            try:
+                audio, _ = sf.read(io.BytesIO(audio), dtype="float32")
+            except Exception:
+                continue
+        if isinstance(audio, np.ndarray):
+            audio = torch.from_numpy(audio.copy())
+        elif not isinstance(audio, torch.Tensor):
+            audio = torch.tensor(audio, dtype=torch.float32)
+        audio = audio.squeeze()
+        if audio.ndim > 1:
+            if audio.shape[0] <= 8 and audio.shape[-1] > audio.shape[0]:
+                audio = audio.mean(dim=0)
+            else:
+                audio = audio.mean(dim=-1)
+        audio = torch.atleast_1d(audio)
+
+        if audio.shape[-1] > target_len:
+            audio = audio[:target_len]
+        elif audio.shape[-1] < target_len:
+            audio = torch.nn.functional.pad(audio, (0, target_len - audio.shape[-1]))
+
+        peak = torch.max(torch.abs(audio))
+        if peak > 1.0:
+            audio = audio / peak
+
+        cat_idx = sample.get("category_index", sample.get("label"))
+        meta = sample.get("json", {})
+        if isinstance(meta, (bytes, bytearray)):
+            try:
+                meta = json.loads(meta.decode("utf-8"))
+            except Exception:
+                meta = {}
+        elif isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+
+        if cat_idx is None and isinstance(meta, dict):
+            cat_idx = meta.get("category_index")
+            if cat_idx is None:
+                u_class = meta.get("unified_class", "general_noise")
+                from training.configs.classifier_config import UNIFIED_TO_GATE_CLASS
+                gate_name = UNIFIED_TO_GATE_CLASS.get(u_class, "harmonic")
+                gate_map = {"harmonic": 0, "impulsive": 1, "speech_dominant": 2}
+                cat_idx = gate_map.get(gate_name, 0)
+        if cat_idx is None:
+            cat_idx = 0
+
+        batch_wav.append(audio)
+        batch_label.append(int(cat_idx))
+        batch_json.append(meta)
+
+    if not batch_wav:
+        return {}
+
+    return {
+        "wav": torch.stack(batch_wav, dim=0),
+        "label": torch.tensor(batch_label, dtype=torch.long),
+        "category_index": torch.tensor(batch_label, dtype=torch.long),
+        "json": batch_json,
+    }
+
+
+def aec_collate_fn(batch):
+    if not batch:
+        return {}
+    import io, numpy as np, soundfile as sf
+    cleaned = []
+    for sample in batch:
+        s = {}
+        for k in ("mic.wav", "farend.wav", "nearend.wav", "echo.wav", "mic", "farend", "nearend"):
+            v = sample.get(k)
+            if v is None:
+                continue
+            if isinstance(v, (bytes, bytearray)):
+                try:
+                    v, _ = sf.read(io.BytesIO(v), dtype="float32")
+                except Exception:
+                    continue
+            if isinstance(v, np.ndarray):
+                v = torch.from_numpy(v.copy())
+            elif not isinstance(v, torch.Tensor):
+                v = torch.tensor(v, dtype=torch.float32)
+            v = v.squeeze()
+            if v.ndim > 1:
+                if v.shape[0] <= 8 and v.shape[-1] > v.shape[0]:
+                    v = v.mean(dim=0)
+                else:
+                    v = v.mean(dim=-1)
+            v = torch.atleast_1d(v)
+            s[k] = v
+        cleaned.append(s)
+
+    max_len = 2048
+    for s in cleaned:
+        for k in ("mic.wav", "farend.wav", "nearend.wav", "mic", "farend", "nearend"):
+            if k in s and isinstance(s[k], torch.Tensor):
+                max_len = max(max_len, s[k].shape[-1])
+    max_len = min(max_len, 192000)
+
+    batch_mic, batch_farend, batch_nearend = [], [], []
+    for s in cleaned:
+        mic = s.get("mic.wav", s.get("mic"))
+        farend = s.get("farend.wav", s.get("farend"))
+        nearend = s.get("nearend.wav", s.get("nearend", mic))
+        if mic is None or farend is None:
+            continue
+        if mic.shape[-1] > max_len:
+            mic = mic[:max_len]
+        elif mic.shape[-1] < max_len:
+            mic = torch.nn.functional.pad(mic, (0, max_len - mic.shape[-1]))
+        if farend.shape[-1] > max_len:
+            farend = farend[:max_len]
+        elif farend.shape[-1] < max_len:
+            farend = torch.nn.functional.pad(farend, (0, max_len - farend.shape[-1]))
+        if nearend.shape[-1] > max_len:
+            nearend = nearend[:max_len]
+        elif nearend.shape[-1] < max_len:
+            nearend = torch.nn.functional.pad(nearend, (0, max_len - nearend.shape[-1]))
+        batch_mic.append(mic)
+        batch_farend.append(farend)
+        batch_nearend.append(nearend)
+
+    if not batch_mic:
+        return {}
+    return {
+        "mic.wav": torch.stack(batch_mic, dim=0),
+        "farend.wav": torch.stack(batch_farend, dim=0),
+        "nearend.wav": torch.stack(batch_nearend, dim=0),
+    }
+
+
 def train_se_crosscheck(args) -> Path:
     """Model 3: CleanUMamba SSM Crosscheck (Teacher Model)."""
     print("\n" + "=" * 80)
@@ -122,8 +339,8 @@ def train_se_crosscheck(args) -> Path:
             print(f"[{config.model_key}] Starting training loop for {config.max_epochs} epochs...")
             from torch.utils.data import DataLoader
             batch_size = args.batch_size or getattr(config, "batch_size", 16)
-            train_loader = DataLoader(train_ds, batch_size=batch_size)
-            loop_result = trainer.run_training_loop(train_loader)
+            train_loader = DataLoader(train_ds, batch_size=batch_size, collate_fn=se_collate_fn)
+            loop_result = trainer.run_training_loop(train_loader, epochs=config.max_epochs)
             print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
         else:
             print(f"[{config.model_key}] WARNING: Shards not loaded or webdataset not installed. Skipping loop.")
@@ -176,9 +393,9 @@ def train_se_primary(args, teacher_ckpt: Optional[Path] = None) -> Path:
             print(f"[{config.model_key}] Starting training loop for {config.max_epochs} epochs...")
             from torch.utils.data import DataLoader
             batch_size = args.batch_size or getattr(config, "batch_size", 16)
-            train_loader = DataLoader(train_ds, batch_size=batch_size)
-            val_loader = DataLoader(val_ds, batch_size=batch_size) if val_ds else None
-            loop_result = trainer.run_training_loop(train_loader, val_loader)
+            train_loader = DataLoader(train_ds, batch_size=batch_size, collate_fn=se_collate_fn)
+            val_loader = DataLoader(val_ds, batch_size=batch_size, collate_fn=se_collate_fn) if val_ds else None
+            loop_result = trainer.run_training_loop(train_loader, val_loader, epochs=config.max_epochs)
             print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
         else:
             print(f"[{config.model_key}] WARNING: Shards not loaded or webdataset not installed. Skipping loop.")
@@ -224,8 +441,8 @@ def train_se_escalation(args) -> Path:
             print(f"[{config.model_key}] Starting training loop for {config.max_epochs} epochs...")
             from torch.utils.data import DataLoader
             batch_size = args.batch_size or getattr(config, "batch_size", 16)
-            train_loader = DataLoader(train_ds, batch_size=batch_size)
-            loop_result = trainer.run_training_loop(train_loader)
+            train_loader = DataLoader(train_ds, batch_size=batch_size, collate_fn=se_collate_fn)
+            loop_result = trainer.run_training_loop(train_loader, epochs=config.max_epochs)
             print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
         else:
             print(f"[{config.model_key}] WARNING: Shards not loaded or webdataset not installed. Skipping loop.")
@@ -268,8 +485,8 @@ def train_classifier(args) -> Path:
             print(f"[{config.model_key}] Starting training loop for {config.max_epochs} epochs...")
             from torch.utils.data import DataLoader
             batch_size = args.batch_size or getattr(config, "batch_size", 32)
-            train_loader = DataLoader(train_ds, batch_size=batch_size)
-            loop_result = trainer.run_training_loop(train_loader)
+            train_loader = DataLoader(train_ds, batch_size=batch_size, collate_fn=clf_collate_fn)
+            loop_result = trainer.run_training_loop(train_loader, epochs=config.max_epochs)
             print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
         else:
             print(f"[{config.model_key}] WARNING: Shards not loaded or webdataset not installed. Skipping loop.")
@@ -309,8 +526,8 @@ def train_aec(args) -> Optional[Path]:
             print(f"[{config.model_key}] Starting training loop for {config.max_epochs} epochs...")
             from torch.utils.data import DataLoader
             batch_size = args.batch_size or getattr(config, "batch_size", 16)
-            train_loader = DataLoader(train_ds, batch_size=batch_size)
-            loop_result = trainer.run_training_loop(train_loader)
+            train_loader = DataLoader(train_ds, batch_size=batch_size, collate_fn=aec_collate_fn)
+            loop_result = trainer.run_training_loop(train_loader, epochs=config.max_epochs)
             print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
         else:
             print(f"[{config.model_key}] WARNING: Shards not loaded or webdataset not installed. Skipping loop.")

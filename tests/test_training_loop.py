@@ -642,3 +642,123 @@ class TestGradualUnfreezingInTrainingLoop:
         assert p2.requires_grad is False
 
 
+class TestDataLoaderCollationAndIteration:
+    """Tests IterableDataset integration with PyTorch DataLoader and collate functions."""
+
+    def test_iterable_dataset_subclass_and_dataloader_iteration(self):
+        import torch
+        from torch.utils.data import DataLoader, IterableDataset
+        from data_forge.exporter.torch_dataset import (
+            _BaseAegisShardDataset,
+            AegisClassifierIterableDataset,
+            AegisSpeechEnhancementIterableDataset,
+        )
+
+        assert issubclass(_BaseAegisShardDataset, IterableDataset)
+        assert issubclass(AegisClassifierIterableDataset, IterableDataset)
+        assert issubclass(AegisSpeechEnhancementIterableDataset, IterableDataset)
+
+    def test_clf_collate_fn_with_mock_samples(self):
+        import torch
+        from training.scripts.train_pipeline import clf_collate_fn
+        from training.trainers.classifier_trainer import ClassifierTrainer
+        from training.configs.classifier_config import ClassifierConfig
+
+        mock_batch = [
+            {"wav": torch.randn(4800), "json": {"category_index": 0}},
+            {"wav": torch.randn(9600), "json": {"unified_class": "gunshot_firearm"}},
+            {"wav": torch.randn(12000), "category_index": 2},
+        ]
+        collated = clf_collate_fn(mock_batch)
+        assert "wav" in collated
+        assert "label" in collated
+        assert collated["wav"].shape == (3, 9600)
+        assert collated["label"].shape == (3,)
+        assert collated["label"].tolist() == [0, 1, 2]
+
+        # Verify trainer can take this collated batch
+        trainer = ClassifierTrainer(ClassifierConfig())
+        out = trainer.training_step(collated)
+        assert "loss" in out
+        assert "accuracy" in out
+
+    def test_se_collate_fn_with_variable_lengths(self):
+        import torch
+        from training.scripts.train_pipeline import se_collate_fn
+
+        mock_batch = [
+            {"noisy.wav": torch.randn(3000), "clean.wav": torch.randn(3000), "json": {"unified_class": "tank_tracked"}},
+            {"noisy.wav": torch.randn(5000), "clean.wav": torch.randn(5000), "json": {"unified_class": "clean_speech"}},
+        ]
+        collated = se_collate_fn(mock_batch)
+        assert collated["noisy.wav"].shape == (2, 5000)
+        assert collated["clean.wav"].shape == (2, 5000)
+        assert len(collated["json"]) == 2
+
+    def test_aec_collate_fn_and_trainer(self):
+        import torch
+        from training.scripts.train_pipeline import aec_collate_fn
+        from training.trainers.aec_trainer import AecGateTrainer
+        from training.configs.aec_config import AecGateConfig
+
+        mock_batch = [
+            {"mic.wav": torch.randn(3200), "farend.wav": torch.randn(3200), "nearend.wav": torch.randn(3200)},
+            {"mic.wav": torch.randn(4800), "farend.wav": torch.randn(4800), "nearend.wav": torch.randn(4800)},
+        ]
+        collated = aec_collate_fn(mock_batch)
+        assert "mic.wav" in collated
+        assert "farend.wav" in collated
+        assert collated["mic.wav"].shape == (2, 4800)
+        assert collated["farend.wav"].shape == (2, 4800)
+
+        trainer = AecGateTrainer(AecGateConfig())
+        # Test training step
+        t_res = trainer.training_step(collated)
+        assert "loss" in t_res
+        assert "erle_proxy" in t_res
+
+        # Test evaluation step (must NOT raise RuntimeError for missing grad)
+        e_res = trainer.eval_step(collated)
+        assert "loss" in e_res
+        assert "erle_proxy" in e_res
+
+    def test_all_trainers_empty_batch_graceful(self):
+        from training.trainers.classifier_trainer import ClassifierTrainer
+        from training.trainers.se_primary_trainer import SePrimaryTrainer
+        from training.trainers.aec_trainer import AecGateTrainer
+        from training.configs.classifier_config import ClassifierConfig
+        from training.configs.se_primary_config import SePrimaryConfig
+        from training.configs.aec_config import AecGateConfig
+
+        t_clf = ClassifierTrainer(ClassifierConfig())
+        assert "loss" in t_clf.training_step({})
+        assert "accuracy" in t_clf.eval_step({})
+
+        t_se = SePrimaryTrainer(SePrimaryConfig())
+        assert "loss" in t_se.training_step({})
+        assert "pesq_aggregate" in t_se.eval_step({})
+
+        t_aec = AecGateTrainer(AecGateConfig())
+        assert "loss" in t_aec.training_step({})
+        assert "loss" in t_aec.eval_step({})
+
+    def test_model2_training_mode_no_cross_batch_contamination(self):
+        import torch
+        from training.models.model_loader import DeepFilterNet3Wrapper
+
+        model = DeepFilterNet3Wrapper(df_lookahead=2, conv_lookahead=2)
+        model.train()
+
+        batch_1 = torch.randn(2, 4800)
+        batch_2 = torch.randn(2, 4800)
+
+        out_1 = model(batch_1)
+        out_2 = model(batch_2)
+
+        # Output shape matches batch input directly
+        assert out_1.shape == batch_1.shape
+        assert out_2.shape == batch_2.shape
+        # In training mode, pending_input is not used to buffer across batches
+        assert model._pending_input is None
+
+
