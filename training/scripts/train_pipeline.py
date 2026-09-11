@@ -117,10 +117,22 @@ def train_se_crosscheck(args) -> Path:
     trainer = SeCrosscheckTrainer(config=config, train_dataset=train_ds)
     print(f"[{config.model_key}] Initialized CleanUMamba teacher (precision={config.precision}, device={args.device}).")
 
-    if not args.dry_run and train_ds:
-        print(f"[{config.model_key}] Starting training loop for {config.max_epochs} epochs...")
-        # Note: Actual loop is driven by dataloader in production
+    if not args.dry_run:
+        if train_ds:
+            print(f"[{config.model_key}] Starting training loop for {config.max_epochs} epochs...")
+            from torch.utils.data import DataLoader
+            batch_size = args.batch_size or getattr(config, "batch_size", 16)
+            train_loader = DataLoader(train_ds, batch_size=batch_size)
+            loop_result = trainer.run_training_loop(train_loader)
+            print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
+        else:
+            print(f"[{config.model_key}] WARNING: Shards not loaded or webdataset not installed. Skipping loop.")
     ckpt_path = config.checkpoint_dir / "best_checkpoint.pt"
+    if not ckpt_path.exists():
+        saved = trainer.save_checkpoint(model_state=trainer.model.state_dict() if hasattr(trainer.model, "state_dict") else trainer.model)
+        if saved and Path(saved).exists():
+            import shutil
+            shutil.copy2(saved, ckpt_path)
     print(f"[{config.model_key}] Model 3 checkpoint: {ckpt_path}")
     return ckpt_path
 
@@ -159,10 +171,24 @@ def train_se_primary(args, teacher_ckpt: Optional[Path] = None) -> Path:
     print(f"  - Distillation Factor: {config.distillation_factor}")
     print(f"  - Lookahead: {config.df_lookahead} frames (strict 0ms)")
 
-    if not args.dry_run and train_ds:
-        print(f"[{config.model_key}] Starting training loop for {config.max_epochs} epochs...")
+    if not args.dry_run:
+        if train_ds:
+            print(f"[{config.model_key}] Starting training loop for {config.max_epochs} epochs...")
+            from torch.utils.data import DataLoader
+            batch_size = args.batch_size or getattr(config, "batch_size", 16)
+            train_loader = DataLoader(train_ds, batch_size=batch_size)
+            val_loader = DataLoader(val_ds, batch_size=batch_size) if val_ds else None
+            loop_result = trainer.run_training_loop(train_loader, val_loader)
+            print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
+        else:
+            print(f"[{config.model_key}] WARNING: Shards not loaded or webdataset not installed. Skipping loop.")
 
     ckpt_path = config.checkpoint_dir / "best_checkpoint.pt"
+    if not ckpt_path.exists():
+        saved = trainer.save_checkpoint(model_state=trainer.model.state_dict() if hasattr(trainer.model, "state_dict") else trainer.model)
+        if saved and Path(saved).exists():
+            import shutil
+            shutil.copy2(saved, ckpt_path)
     print(f"[{config.model_key}] Model 1 checkpoint: {ckpt_path}")
     return ckpt_path
 
@@ -193,10 +219,23 @@ def train_se_escalation(args) -> Path:
     trainer = SeEscalationTrainer(config=config, train_dataset=train_ds)
     print(f"[{config.model_key}] Initialized SeEscalationTrainer with 1-chunk lookahead delay buffer.")
 
-    if not args.dry_run and train_ds:
-        print(f"[{config.model_key}] Starting training loop for {config.max_epochs} epochs...")
+    if not args.dry_run:
+        if train_ds:
+            print(f"[{config.model_key}] Starting training loop for {config.max_epochs} epochs...")
+            from torch.utils.data import DataLoader
+            batch_size = args.batch_size or getattr(config, "batch_size", 16)
+            train_loader = DataLoader(train_ds, batch_size=batch_size)
+            loop_result = trainer.run_training_loop(train_loader)
+            print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
+        else:
+            print(f"[{config.model_key}] WARNING: Shards not loaded or webdataset not installed. Skipping loop.")
 
     ckpt_path = config.checkpoint_dir / "best_checkpoint.pt"
+    if not ckpt_path.exists():
+        saved = trainer.save_checkpoint(model_state=trainer.model.state_dict() if hasattr(trainer.model, "state_dict") else trainer.model)
+        if saved and Path(saved).exists():
+            import shutil
+            shutil.copy2(saved, ckpt_path)
     print(f"[{config.model_key}] Model 2 checkpoint: {ckpt_path}")
     return ckpt_path
 
@@ -224,10 +263,23 @@ def train_classifier(args) -> Path:
     trainer = ClassifierTrainer(config=config, train_dataset=train_ds)
     print(f"[{config.model_key}] Initialized ClassifierTrainer on 0.2s windows (arch={config.architecture}).")
 
-    if not args.dry_run and train_ds:
-        print(f"[{config.model_key}] Starting training loop for {config.max_epochs} epochs...")
+    if not args.dry_run:
+        if train_ds:
+            print(f"[{config.model_key}] Starting training loop for {config.max_epochs} epochs...")
+            from torch.utils.data import DataLoader
+            batch_size = args.batch_size or getattr(config, "batch_size", 32)
+            train_loader = DataLoader(train_ds, batch_size=batch_size)
+            loop_result = trainer.run_training_loop(train_loader)
+            print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
+        else:
+            print(f"[{config.model_key}] WARNING: Shards not loaded or webdataset not installed. Skipping loop.")
 
     ckpt_path = config.checkpoint_dir / "best_checkpoint.pt"
+    if not ckpt_path.exists():
+        saved = trainer.save_checkpoint(model_state=trainer.model.state_dict() if hasattr(trainer.model, "state_dict") else trainer.model)
+        if saved and Path(saved).exists():
+            import shutil
+            shutil.copy2(saved, ckpt_path)
     print(f"[{config.model_key}] Model 4 checkpoint: {ckpt_path}")
     return ckpt_path
 
@@ -251,7 +303,24 @@ def train_aec(args) -> Optional[Path]:
 
     from training.trainers.aec_trainer import AecGateTrainer
     trainer = AecGateTrainer(config=config, train_dataset=train_ds)
+
+    if not args.dry_run:
+        if train_ds:
+            print(f"[{config.model_key}] Starting training loop for {config.max_epochs} epochs...")
+            from torch.utils.data import DataLoader
+            batch_size = args.batch_size or getattr(config, "batch_size", 16)
+            train_loader = DataLoader(train_ds, batch_size=batch_size)
+            loop_result = trainer.run_training_loop(train_loader)
+            print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
+        else:
+            print(f"[{config.model_key}] WARNING: Shards not loaded or webdataset not installed. Skipping loop.")
+
     ckpt_path = config.checkpoint_dir / "best_checkpoint.pt"
+    if not ckpt_path.exists():
+        saved = trainer.save_checkpoint(model_state=trainer.model.state_dict() if hasattr(trainer.model, "state_dict") else trainer.model)
+        if saved and Path(saved).exists():
+            import shutil
+            shutil.copy2(saved, ckpt_path)
     print(f"[{config.model_key}] Model 5 checkpoint: {ckpt_path}")
     return ckpt_path
 

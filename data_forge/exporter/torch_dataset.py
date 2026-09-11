@@ -92,8 +92,12 @@ class AegisSpeechEnhancementIterableDataset(_BaseAegisShardDataset):
             audio = sample.get(key)
             if audio is None:
                 continue
-            if isinstance(audio, bytes):
-                continue  # raw bytes — caller will decode separately
+            if isinstance(audio, (bytes, bytearray)):
+                try:
+                    import io, soundfile as sf
+                    audio, _ = sf.read(io.BytesIO(audio), dtype="float32")
+                except Exception:
+                    continue
             if hasattr(audio, '__len__'):
                 arr = np.asarray(audio, dtype=np.float32).squeeze()
                 # Crop
