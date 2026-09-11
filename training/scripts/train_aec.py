@@ -33,7 +33,7 @@ def main():
     try:
         from data_forge.exporter import AegisAecIterableDataset
         train_ds = AegisAecIterableDataset(config.data.aec_shards, split="train")
-    except ImportError:
+    except (ImportError, FileNotFoundError):
         train_ds = None
 
     from training.trainers.aec_trainer import AecGateTrainer

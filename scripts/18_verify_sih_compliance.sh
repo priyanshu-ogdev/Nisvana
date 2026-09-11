@@ -20,4 +20,4 @@ fi
 
 echo "=== PROJECT AEGIS: RUNNING OFFICIAL SIH DEFENCE BENCHMARK AUDIT ==="
 ${PY_BIN} -m pytest -v "${ROOT_DIR}/tests/test_sih_inference_metrics.py" "$@"
-echo "=== SIH DEFENCE COMPLIANCE AUDIT PASSED ==="
+echo "=== SIH DEFENCE COMPLIANCE AUDIT COMPLETED ==="

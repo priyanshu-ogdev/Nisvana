@@ -70,10 +70,24 @@ class SePrimaryTrainer(BaseTrainer):
                 multires_spec_gamma=getattr(self.config.loss, "multires_spec_gamma", 0.3),
                 multires_fft_sizes=getattr(self.config.loss, "multires_fft_sizes", [256, 512, 1024, 2048]),
                 local_snr_factor=getattr(self.config.loss, "local_snr_factor", 1e-3),
+                sdr_factor=getattr(self.config.loss, "sdr_factor", 0.5),
+                impulse_weight_factor=getattr(self.config.loss, "impulse_weight_factor", 0.3),
+                impulse_onset_boost=getattr(self.config.loss, "impulse_onset_boost", 3.0),
+                perceptual_freq_factor=getattr(self.config.loss, "perceptual_freq_factor", 0.2),
+                speech_presence_sdr_boost=getattr(
+                    self.config.loss, "speech_presence_sdr_boost", 2.5
+                ),
+                speech_presence_rms_threshold=getattr(
+                    self.config.loss, "speech_presence_rms_threshold", 0.02
+                ),
+                speech_band_hz=getattr(self.config.loss, "speech_band_hz", (300, 4000)),
+                speech_presence_sample_rate=getattr(
+                    self.config.loss, "speech_presence_sample_rate", 48000
+                ),
             )
         else:
             loss_cfg = ResolvedLossConfig()
-        self.loss_fn = build_se_loss(loss_cfg)
+        self.loss_fn = build_se_loss(loss_cfg, prefer_vendored=True)
 
         # Initialise EMA shadow weights
         self.init_ema(self.model)
@@ -279,4 +293,3 @@ class SePrimaryTrainer(BaseTrainer):
 
             from training.utils.metrics import build_eval_metrics_dict
             return build_eval_metrics_dict(enhanced, clean, classes)
-

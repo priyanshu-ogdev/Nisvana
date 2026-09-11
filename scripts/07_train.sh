@@ -15,7 +15,7 @@
 #   - SNR Curriculum scheduling (+15 dB down to -5 dB)
 #
 # Usage:
-#   ./scripts/train.sh [OPTIONS]
+#   ./scripts/07_train.sh [OPTIONS]
 #
 # Options:
 #   --model [all|se_primary|se_escalation|se_crosscheck|classifier|aec]

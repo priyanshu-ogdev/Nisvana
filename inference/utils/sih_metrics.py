@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional, Union
 import numpy as np
 import torch
 
+from data_forge.config import TARGET_SAMPLE_RATE
 from training.utils.metrics import (
     compute_snr_db,
     compute_si_snr_db,
@@ -106,9 +107,9 @@ def evaluate_sih_compliance(
     estimate: Union[torch.Tensor, np.ndarray],
     target_clean: Union[torch.Tensor, np.ndarray],
     input_noisy: Union[torch.Tensor, np.ndarray],
-    sample_rate: int = 48000,
+    sample_rate: int = TARGET_SAMPLE_RATE,
     total_latency_ms: Optional[float] = None,
-    chunk_ms: float = 10.0,
+    chunk_ms: Optional[float] = None,
 ) -> SihEvaluationResult:
     """
     Computes all SIH defence metrics and determines strict standard compliance.
@@ -139,6 +140,9 @@ def evaluate_sih_compliance(
     dns_res = compute_dnsmos_proxy(estimate, sr=sample_rate)
     dnsmos_ovrl = dns_res["dnsmos_ovrl"]
 
+    if chunk_ms is None:
+        chunk_ms = 1000.0 * 480 / sample_rate
+
     # 5. Latency & Real-Time Factor
     if total_latency_ms is not None and total_latency_ms > 0.0:
         rtf = total_latency_ms / max(chunk_ms, 1e-6)
@@ -152,9 +156,11 @@ def evaluate_sih_compliance(
 
     # Verdict evaluations against SIH specifications:
     # SNR passes if output is > 15 dB OR if noise reduction exceeds 15 dB (e.g. from -10 dB to +5 dB)
-    snr_passed = bool(snr_out >= SIH_TARGET_SNR_DB or delta_snr >= SIH_TARGET_DELTA_SNR_DB)
-    stoi_passed = bool(stoi_out >= SIH_TARGET_STOI or (stoi_in < 0.60 and delta_stoi >= 0.20))
-    pesq_passed = bool(pesq_val >= SIH_TARGET_PESQ)
+    snr_passed = bool(snr_out > SIH_TARGET_SNR_DB or delta_snr > SIH_TARGET_DELTA_SNR_DB)
+    # Proxy scores are useful for development dashboards, but cannot establish
+    # compliance with the PRD's official metric targets.
+    stoi_passed = bool(stoi_out > SIH_TARGET_STOI)
+    pesq_passed = bool(pesq_val > SIH_TARGET_PESQ)
 
     overall_compliant = bool(snr_passed and stoi_passed and pesq_passed and latency_passed)
 

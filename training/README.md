@@ -143,6 +143,23 @@ Implemented in [metrics.py](file:///d:/Nisvana/training/utils/metrics.py):
 - **DNSMOS P.835**: SIG, BAK, and OVRL neural MOS proxies.
 - **ERLE (dB)**: Echo Return Loss Enhancement for Model 5.
 
+### 2.9 Generalization and split hygiene
+
+Training consumes only `*-train-*.tar` shards. Validation and deployment
+readiness must use the independent `*-val-*.tar` and `*-gentest-*.tar`
+shards respectively. The shard loader now fails closed when a requested
+split is missing; it never falls back to all tar files in a directory.
+Evaluation also requires real data and reports both sample-weighted and
+class-balanced metrics so frequent broad classes cannot hide regressions in
+thin operational classes. Use `--seed` and `--num-workers` on
+`training.scripts.train_pipeline` for reproducible worker seeding..
+
+Data-forge provenance (`source_dataset`, `sync_tier`, native sample rate,
+measured SNR, and unified class) is retained in every speech-enhancement
+mixture sidecar. Training applies the configured class and sync-tier weights
+during streaming shard iteration; validation and `test_generalization` are
+never oversampled..
+
 ---
 
 ## 3. Training Execution & CLI Reference

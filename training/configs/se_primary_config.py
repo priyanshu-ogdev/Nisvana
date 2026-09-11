@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List
 
 from .base_config import BaseModelConfig, UNIFIED_CLASSES
+from data_forge.config import TARGET_SAMPLE_RATE
 
 
 # Per-class oversampling factors for the WeightedRandomSampler, derived
@@ -86,6 +87,14 @@ class DfLossConfig:
     multires_spec_gamma: float = 0.3
     multires_fft_sizes: List[int] = field(default_factory=lambda: [256, 512, 1024, 2048])
     local_snr_factor: float = 1e-3
+    sdr_factor: float = 0.5
+    impulse_weight_factor: float = 0.3
+    impulse_onset_boost: float = 3.0
+    perceptual_freq_factor: float = 0.2
+    speech_presence_sdr_boost: float = 2.5
+    speech_presence_rms_threshold: float = 0.02
+    speech_band_hz: tuple = (300, 4000)
+    speech_presence_sample_rate: int = TARGET_SAMPLE_RATE
 
 
 @dataclass
@@ -146,8 +155,13 @@ class SePrimaryConfig(BaseModelConfig):
     # "effectively clean" bucket) proportion slightly and lean toward the
     # PS's literal target range (>15dB SNR improvement implies training
     # exposure spanning well below and around that threshold).
-    dataloader_snrs: List[int] = field(default_factory=lambda: [-100, -5, 0, 5, 10, 20, 40])
-    dataloader_snr_weights: List[float] = field(default_factory=lambda: [0.10, 0.20, 0.20, 0.20, 0.15, 0.10, 0.05])
+    # Matches data-forge's normal [-5, 20] dB envelope plus the
+    # gunfire-specific [-15, 20] extension. No unsupported +40/-100 dB
+    # buckets are presented to the sampler.
+    dataloader_snrs: List[int] = field(default_factory=lambda: [-15, -10, -5, 0, 5, 10, 15, 20])
+    dataloader_snr_weights: List[float] = field(
+        default_factory=lambda: [0.08, 0.08, 0.14, 0.16, 0.16, 0.14, 0.12, 0.12]
+    )
 
     loss: DfLossConfig = field(default_factory=DfLossConfig)
     class_oversample_factors: Dict[str, float] = field(default_factory=lambda: dict(CLASS_OVERSAMPLE_FACTORS))

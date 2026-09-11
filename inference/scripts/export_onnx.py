@@ -14,6 +14,7 @@ from inference.engines.onnx_engine import (
     benchmark_edge_latency,
     get_algorithmic_delay_ms,
 )
+from inference.contract import DEFAULT_STREAMING_CONTRACT
 
 
 def main():
@@ -23,9 +24,9 @@ def main():
                         help="Model key to export.")
     parser.add_argument("--output-dir", type=str, default=str(DATA_DIR / "onnx_models"),
                         help="Directory to save exported ONNX model.")
-    parser.add_argument("--sample-rate", type=int, default=48000,
+    parser.add_argument("--sample-rate", type=int, default=DEFAULT_STREAMING_CONTRACT.sample_rate,
                         help="Sample rate in Hz.")
-    parser.add_argument("--chunk-ms", type=float, default=10.0,
+    parser.add_argument("--chunk-ms", type=float, default=DEFAULT_STREAMING_CONTRACT.chunk_ms,
                         help="Frame chunk duration in milliseconds.")
     parser.add_argument("--platform", type=str, default="platform_a",
                         choices=["platform_a", "platform_b"],
@@ -35,6 +36,16 @@ def main():
     parser.add_argument("--profile", action="store_true", default=True,
                         help="Profile edge latency after export.")
     args = parser.parse_args()
+    if args.sample_rate != DEFAULT_STREAMING_CONTRACT.sample_rate:
+        parser.error(
+            f"--sample-rate must be {DEFAULT_STREAMING_CONTRACT.sample_rate} "
+            "to match the streaming contract"
+        )
+    if abs(args.chunk_ms - DEFAULT_STREAMING_CONTRACT.chunk_ms) > 1e-6:
+        parser.error(
+            f"--chunk-ms must be {DEFAULT_STREAMING_CONTRACT.chunk_ms:g} "
+            "to match the streaming contract"
+        )
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

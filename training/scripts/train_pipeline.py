@@ -33,6 +33,11 @@ from training.configs.se_crosscheck_config import SeCrosscheckConfig
 from training.configs.classifier_config import ClassifierConfig
 from training.configs.aec_config import AecGateConfig
 from training.data.weighted_shard_sampler import build_weighted_se_dataset
+from training.data.dataset_guard import (
+    make_loader_kwargs,
+    seed_everything,
+    validate_split_shards,
+)
 
 
 def parse_args():
@@ -94,6 +99,11 @@ def parse_args():
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume training from")
     parser.add_argument("--force", action="store_true", help="Force execution (required for Model 5 AEC)")
     parser.add_argument("--dry-run", action="store_true", help="Perform architecture initialization dry run without training loop")
+    parser.add_argument(
+        "--num-workers", type=int, default=None,
+        help="DataLoader workers. Defaults to the model config; workers are deterministically seeded.",
+    )
+    parser.add_argument("--seed", type=int, default=1337, help="Global reproducibility seed.")
     return parser.parse_args()
 
 
@@ -109,6 +119,19 @@ def _apply_epoch_override(config, args) -> None:
     if args.epochs:
         steps_per_epoch = getattr(config, "steps_per_epoch", 1000)
         config.total_finetune_steps = args.epochs * steps_per_epoch
+    if args.num_workers is not None:
+        config.num_workers = max(0, args.num_workers)
+    config.seed = args.seed
+
+
+def _validate_se_data(config, args) -> None:
+    """Fail before model construction when a required real split is absent."""
+    if args.dry_run or not config.data.require_real_shards:
+        return
+    validate_split_shards(
+        [config.data.speech_enhancement_shards],
+        required_splits=config.data.required_splits,
+    )
 
 
 def se_collate_fn(batch):
@@ -341,12 +364,16 @@ def train_se_crosscheck(args) -> Path:
         config.resume_from = args.resume
     config.precision = args.precision
 
-    try:
-        train_ds = build_weighted_se_dataset(
-            config.data.speech_enhancement_shards, "train", config.class_oversample_factors
-        )
-    except Exception:
+    _validate_se_data(config, args)
+    if args.dry_run:
         train_ds = None
+    else:
+        try:
+            train_ds = build_weighted_se_dataset(
+                config.data.speech_enhancement_shards, "train", config.class_oversample_factors
+            )
+        except (ImportError, FileNotFoundError):
+            train_ds = None
 
     from training.trainers.se_crosscheck_trainer import SeCrosscheckTrainer
     trainer = SeCrosscheckTrainer(config=config, train_dataset=train_ds)
@@ -357,7 +384,10 @@ def train_se_crosscheck(args) -> Path:
             print(f"[{config.model_key}] Starting training loop for {config.total_finetune_steps} steps...")
             from torch.utils.data import DataLoader
             batch_size = args.batch_size or getattr(config, "batch_size", 16)
-            train_loader = DataLoader(train_ds, batch_size=batch_size, collate_fn=se_collate_fn)
+            train_loader = DataLoader(
+                train_ds, batch_size=batch_size, collate_fn=se_collate_fn,
+                **make_loader_kwargs(config),
+            )
             loop_result = trainer.run_training_loop(train_loader, epochs=args.epochs)
             print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
         else:
@@ -387,15 +417,19 @@ def train_se_primary(args, teacher_ckpt: Optional[Path] = None) -> Path:
     config.qat_enabled = args.qat
     config.distillation_factor = args.distillation_factor if args.distillation else 0.0
 
-    try:
-        train_ds = build_weighted_se_dataset(
-            config.data.speech_enhancement_shards, "train", config.class_oversample_factors
-        )
-        val_ds = build_weighted_se_dataset(
-            config.data.speech_enhancement_shards, "val", config.class_oversample_factors
-        )
-    except Exception:
+    _validate_se_data(config, args)
+    if args.dry_run:
         train_ds, val_ds = None, None
+    else:
+        try:
+            train_ds = build_weighted_se_dataset(
+                config.data.speech_enhancement_shards, "train", config.class_oversample_factors
+            )
+            val_ds = build_weighted_se_dataset(
+                config.data.speech_enhancement_shards, "val", config.class_oversample_factors
+            )
+        except (ImportError, FileNotFoundError):
+            train_ds, val_ds = None, None
 
     from training.trainers.se_primary_trainer import SePrimaryTrainer
     trainer = SePrimaryTrainer(config=config, train_dataset=train_ds, val_dataset=val_ds)
@@ -410,8 +444,17 @@ def train_se_primary(args, teacher_ckpt: Optional[Path] = None) -> Path:
             print(f"[{config.model_key}] Starting training loop for {config.total_finetune_steps} steps...")
             from torch.utils.data import DataLoader
             batch_size = args.batch_size or getattr(config, "batch_size", 16)
-            train_loader = DataLoader(train_ds, batch_size=batch_size, collate_fn=se_collate_fn)
-            val_loader = DataLoader(val_ds, batch_size=batch_size, collate_fn=se_collate_fn) if val_ds else None
+            train_loader = DataLoader(
+                train_ds, batch_size=batch_size, collate_fn=se_collate_fn,
+                **make_loader_kwargs(config),
+            )
+            val_loader = (
+                DataLoader(
+                    val_ds, batch_size=batch_size, collate_fn=se_collate_fn,
+                    **make_loader_kwargs(config),
+                )
+                if val_ds else None
+            )
             loop_result = trainer.run_training_loop(train_loader, val_loader, epochs=args.epochs)
             print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
         else:
@@ -441,11 +484,14 @@ def train_se_escalation(args) -> Path:
     config.precision = args.precision
     config.qat_enabled = args.qat
 
+    _validate_se_data(config, args)
     try:
+        if args.dry_run:
+            raise FileNotFoundError("dry-run skips dataset construction")
         train_ds = build_weighted_se_dataset(
             config.data.speech_enhancement_shards, "train", config.class_oversample_factors
         )
-    except Exception:
+    except (ImportError, FileNotFoundError):
         train_ds = None
 
     from training.trainers.se_escalation_trainer import SeEscalationTrainer
@@ -457,7 +503,10 @@ def train_se_escalation(args) -> Path:
             print(f"[{config.model_key}] Starting training loop for {config.total_finetune_steps} steps...")
             from torch.utils.data import DataLoader
             batch_size = args.batch_size or getattr(config, "batch_size", 16)
-            train_loader = DataLoader(train_ds, batch_size=batch_size, collate_fn=se_collate_fn)
+            train_loader = DataLoader(
+                train_ds, batch_size=batch_size, collate_fn=se_collate_fn,
+                **make_loader_kwargs(config),
+            )
             loop_result = trainer.run_training_loop(train_loader, epochs=args.epochs)
             print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
         else:
@@ -486,9 +535,11 @@ def train_classifier(args) -> Path:
         config.resume_from = args.resume
 
     try:
+        if args.dry_run:
+            raise FileNotFoundError("dry-run skips dataset construction")
         from data_forge.exporter import AegisClassifierIterableDataset
         train_ds = AegisClassifierIterableDataset(config.data.classifier_shards, split="train")
-    except Exception:
+    except (ImportError, FileNotFoundError):
         train_ds = None
 
     from training.trainers.classifier_trainer import ClassifierTrainer
@@ -500,7 +551,10 @@ def train_classifier(args) -> Path:
             print(f"[{config.model_key}] Starting training loop for {config.total_finetune_steps} steps...")
             from torch.utils.data import DataLoader
             batch_size = args.batch_size or getattr(config, "batch_size", 32)
-            train_loader = DataLoader(train_ds, batch_size=batch_size, collate_fn=clf_collate_fn)
+            train_loader = DataLoader(
+                train_ds, batch_size=batch_size, collate_fn=clf_collate_fn,
+                **make_loader_kwargs(config),
+            )
             loop_result = trainer.run_training_loop(train_loader, epochs=args.epochs)
             print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
         else:
@@ -529,9 +583,11 @@ def train_aec(args) -> Optional[Path]:
     print(f"[{config.model_key}] FORCED fine-tuning initiated.")
     _apply_epoch_override(config, args)
     try:
+        if args.dry_run:
+            raise FileNotFoundError("dry-run skips dataset construction")
         from data_forge.exporter import AegisAecIterableDataset
         train_ds = AegisAecIterableDataset(config.data.aec_shards, split="train")
-    except Exception:
+    except (ImportError, FileNotFoundError):
         train_ds = None
 
     from training.trainers.aec_trainer import AecGateTrainer
@@ -542,7 +598,10 @@ def train_aec(args) -> Optional[Path]:
             print(f"[{config.model_key}] Starting training loop for {config.total_finetune_steps} steps...")
             from torch.utils.data import DataLoader
             batch_size = args.batch_size or getattr(config, "batch_size", 16)
-            train_loader = DataLoader(train_ds, batch_size=batch_size, collate_fn=aec_collate_fn)
+            train_loader = DataLoader(
+                train_ds, batch_size=batch_size, collate_fn=aec_collate_fn,
+                **make_loader_kwargs(config),
+            )
             loop_result = trainer.run_training_loop(train_loader, epochs=args.epochs)
             print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
         else:
@@ -560,6 +619,7 @@ def train_aec(args) -> Optional[Path]:
 
 def main():
     args = parse_args()
+    seed_everything(args.seed)
     start_time = time.time()
 
     print("=" * 80)

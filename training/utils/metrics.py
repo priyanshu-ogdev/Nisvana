@@ -382,6 +382,24 @@ def compute_dnsmos_proxy(
     return {"dnsmos_sig": sig, "dnsmos_bak": bak, "dnsmos_ovrl": ovrl}
 
 
+def official_stoi_available() -> bool:
+    """Whether the compliance-grade pystoi implementation is installed."""
+    try:
+        import pystoi  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def official_pesq_available() -> bool:
+    """Whether the compliance-grade PESQ implementation is installed."""
+    try:
+        import pesq  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
 # ==============================================================================
 # 3. Acoustic Echo Cancellation (ERLE)
 # ==============================================================================

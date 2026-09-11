@@ -18,6 +18,6 @@ else
     PY_BIN="$(command -v python3 || command -v python)"
 fi
 
-echo "=== PROJECT AEGIS: RUNNING FULL AUDIO METRICS EVALUATION SUITE ==="
+echo "=== PROJECT AEGIS: RUNNING REAL-DATA AUDIO METRICS EVALUATION SUITE ==="
 ${PY_BIN} -m training.scripts.evaluate_models "$@"
 echo "=== EVALUATION COMPLETED ==="

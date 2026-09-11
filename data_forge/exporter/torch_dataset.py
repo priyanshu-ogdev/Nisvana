@@ -18,7 +18,8 @@ still works in environments that only build shards.
 """
 
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Callable, Iterator, Optional
+import random
 
 
 def _require_webdataset():
@@ -45,9 +46,15 @@ class _BaseAegisShardDataset(_IterableDatasetBase):
     def __init__(self, shard_dir: Path, split: str = "train", shard_prefix: str = "shard"):
         self.shard_dir = Path(shard_dir)
         self.split = split
+        self.sample_weight_fn: Optional[Callable[[dict], float]] = None
+        self._sampling_seed = 1337
 
         # Check if split-specific shards exist (e.g. se-train-*.tar, se-val-*.tar, se-gentest-*.tar)
-        split_tag = "gentest" if split in ("test", "gentest", "test_generalization") else split
+        split_tag = (
+            "test_generalization"
+            if split in ("test", "gentest", "test_generalization")
+            else split
+        )
         branch_subname = "speech_enhancement" if shard_prefix == "se" else ("classifier" if shard_prefix == "clf" else "aec")
         candidates = [
             self.shard_dir,
@@ -70,13 +77,14 @@ class _BaseAegisShardDataset(_IterableDatasetBase):
                     found_shards = m
                     break
 
-        if not found_shards and self.shard_dir.exists() and self.shard_dir.is_dir():
-            found_shards = sorted(list(self.shard_dir.glob("*.tar")))
-
         if found_shards:
             pattern = [str(p) for p in found_shards]
         else:
-            pattern = str(self.shard_dir / f"{shard_prefix}-{split_tag}-{{000000..999999}}.tar")
+            raise FileNotFoundError(
+                f"No shards found for split={split!r} under {self.shard_dir}. "
+                f"Expected {shard_prefix}-{split_tag}-*.tar; refusing to fall back "
+                "to another split."
+            )
 
         self._wds = _require_webdataset()
         # WebDataset accepts either a brace-pattern string or a list of concrete tar paths.
@@ -87,7 +95,28 @@ class _BaseAegisShardDataset(_IterableDatasetBase):
         )
 
     def __iter__(self) -> Iterator:
-        return iter(self.dataset)
+        if self.sample_weight_fn is None or self.split != "train":
+            return iter(self.dataset)
+
+        try:
+            import torch
+            worker_info = torch.utils.data.get_worker_info()
+            worker_offset = worker_info.id if worker_info is not None else 0
+        except ImportError:
+            worker_offset = 0
+        rng = random.Random(self._sampling_seed + worker_offset)
+
+        def weighted_samples():
+            for sample in self.dataset:
+                weight = max(0.0, float(self.sample_weight_fn(sample)))
+                whole_repeats = int(weight)
+                fractional_repeat = weight - whole_repeats
+                for _ in range(whole_repeats):
+                    yield sample
+                if fractional_repeat and rng.random() < fractional_repeat:
+                    yield sample
+
+        return weighted_samples()
 
 
 class AegisSpeechEnhancementIterableDataset(_BaseAegisShardDataset):

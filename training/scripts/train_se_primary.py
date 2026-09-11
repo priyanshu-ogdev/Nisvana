@@ -24,7 +24,7 @@ def main():
         val_ds = build_weighted_se_dataset(
             config.data.speech_enhancement_shards, "val", config.class_oversample_factors
         )
-    except ImportError:
+    except (ImportError, FileNotFoundError):
         train_ds, val_ds = None, None
 
     print(f"[{config.model_key}] df_lookahead={config.df_lookahead} conv_lookahead={config.conv_lookahead} "

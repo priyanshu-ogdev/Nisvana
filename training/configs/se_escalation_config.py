@@ -62,8 +62,10 @@ class SeEscalationConfig(BaseModelConfig):
     # data_forge's mixing-stage SNR range (currently -5 to 20dB) -- this
     # config reweights WITHIN that range rather than requiring a re-mix,
     # so Models 1-3 can all read the same shards.
-    dataloader_snrs: List[int] = field(default_factory=lambda: [-100, -5, 0, 5, 10, 20, 40])
-    dataloader_snr_weights: List[float] = field(default_factory=lambda: [0.03, 0.30, 0.25, 0.20, 0.15, 0.05, 0.02])
+    dataloader_snrs: List[int] = field(default_factory=lambda: [-15, -10, -5, 0, 5, 10, 15, 20])
+    dataloader_snr_weights: List[float] = field(
+        default_factory=lambda: [0.12, 0.14, 0.18, 0.18, 0.14, 0.10, 0.08, 0.06]
+    )
 
     loss: DfLossConfig = field(default_factory=DfLossConfig)
     class_oversample_factors: Dict[str, float] = field(default_factory=lambda: dict(CLASS_OVERSAMPLE_FACTORS))

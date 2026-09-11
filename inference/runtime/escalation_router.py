@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 
 from training.models.model_loader import build_model_for_key
+from inference.contract import DEFAULT_STREAMING_CONTRACT, StreamingContract
 
 
 class AcousticEscalationRouter:
@@ -41,9 +42,16 @@ class AcousticEscalationRouter:
         # Rev 3 P1.4: lazy-load idle timeout
         escalation_idle_unload_sec: float = 30.0,
         lazy_load_escalation: bool = True,
+        contract: StreamingContract = DEFAULT_STREAMING_CONTRACT,
     ):
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.sample_rate = sample_rate
+        if sample_rate != contract.sample_rate:
+            raise ValueError(
+                f"sample_rate={sample_rate} does not match streaming contract "
+                f"{contract.sample_rate}"
+            )
+        self.contract = contract
+        self.sample_rate = contract.sample_rate
 
         # Instantiate primary + classifier (always resident)
         self.model_primary = model_primary or build_model_for_key("aegis-se-primary")
@@ -77,6 +85,8 @@ class AcousticEscalationRouter:
         # Rev 3 P1.2: intelligibility floor — minimum dry signal preserved
         # during speech-dominant frames. A 3-line mixing safeguard, not a
         # model change.
+        if not 0.0 <= intelligibility_floor <= 1.0:
+            raise ValueError("intelligibility_floor must be in [0, 1]")
         self.intelligibility_floor = intelligibility_floor
 
         # Rev 3 P1.3: asymmetric mode transition hysteresis.
@@ -84,11 +94,19 @@ class AcousticEscalationRouter:
         # Bypass entry: require threshold to hold for bypass_confirm_chunks
         # consecutive windows before transitioning. Prevents premature bypass
         # when a brief clean interlude interrupts active noise.
+        if bypass_confirm_chunks < 1:
+            raise ValueError("bypass_confirm_chunks must be positive")
         self.bypass_confirm_chunks = bypass_confirm_chunks
         self._bypass_confirm_counter = 0
 
         # Classifier rolling buffer (unchanged from prior fix)
-        self.classifier_window_samples = int(classifier_window_sec * sample_rate)
+        expected_window_sec = contract.classifier_window_samples / contract.sample_rate
+        if abs(classifier_window_sec - expected_window_sec) > 1e-6:
+            raise ValueError(
+                f"classifier_window_sec={classifier_window_sec} does not match "
+                f"training/inference contract ({expected_window_sec:.3f}s)"
+            )
+        self.classifier_window_samples = contract.classifier_window_samples
         self._classifier_buffer = np.zeros(self.classifier_window_samples, dtype=np.float32)
         self._classifier_buffer_filled = 0
 
@@ -218,8 +236,8 @@ class AcousticEscalationRouter:
         """
         if hasattr(self.model_primary, "reset_state"):
             self.model_primary.reset_state()
-        if hasattr(self.model_escalation, "reset_state"):
-            self.model_escalation.reset_state()
+        if self._model_escalation is not None and hasattr(self._model_escalation, "reset_state"):
+            self._model_escalation.reset_state()
         self.current_state = None  # matches __init__'s "None until first frame" convention
         self._classifier_buffer = np.zeros(self.classifier_window_samples, dtype=np.float32)
         self._classifier_buffer_filled = 0
@@ -314,6 +332,15 @@ class AcousticEscalationRouter:
         Returns:
             (enhanced_audio, routing_metadata)
         """
+        if (
+            audio_chunk.ndim != 1
+            or len(audio_chunk) < self.contract.chunk_samples
+            or len(audio_chunk) % self.contract.chunk_samples != 0
+        ):
+            raise ValueError(
+                f"audio_chunk must be 1-D and a multiple of "
+                f"{self.contract.chunk_samples} samples"
+            )
         meta = self.analyze_audio(audio_chunk)
         category = meta["category"]
         snr_est = meta["estimated_snr_db"]
@@ -410,6 +437,14 @@ class AcousticEscalationRouter:
         self._total_route_calls += 1
         self._total_route_ms += ms
         routing_info["route_latency_ms"] = round(ms, 3)
+        routing_info["algorithmic_delay_ms"] = round(
+            self.contract.primary_algorithmic_delay_ms
+            + (self.contract.escalation_additional_delay_ms if target_mode == "escalation" else 0.0),
+            3,
+        )
+        routing_info["end_to_end_latency_ms"] = round(
+            ms + routing_info["algorithmic_delay_ms"], 3
+        )
 
         self._maybe_unload_escalation()
 
@@ -455,6 +490,16 @@ class AcousticEscalationRouter:
         (e.g. for eval/benchmarking, where the one-chunk lag would muddy a
         latency measurement) keeps using the original method unchanged.
         """
+        if (
+            audio_chunk.ndim != 1
+            or len(audio_chunk) < self.contract.chunk_samples
+            or len(audio_chunk) % self.contract.chunk_samples != 0
+        ):
+            raise ValueError(
+                f"audio_chunk must be 1-D and a multiple of "
+                f"{self.contract.chunk_samples} samples"
+            )
+        t0 = time.perf_counter()
         # Use the PREVIOUS call's classification to decide THIS chunk's mode.
         # On the very first call (current_state is None), fall back to the
         # default last_prediction set in __init__ ("primary") rather than
@@ -529,6 +574,20 @@ class AcousticEscalationRouter:
             "estimated_snr_db": round(snr_est, 2),
             "pipelined_lag_chunks": 1,      # explicit in the returned metadata, not just a docstring claim
         }
+        ms = (time.perf_counter() - t0) * 1000.0
+        self._last_route_ms = ms
+        self._total_route_calls += 1
+        self._total_route_ms += ms
+        routing_info["route_latency_ms"] = round(ms, 3)
+        routing_info["algorithmic_delay_ms"] = round(
+            self.contract.primary_algorithmic_delay_ms
+            + (self.contract.escalation_additional_delay_ms if target_mode == "escalation" else 0.0)
+            + self.contract.chunk_ms,
+            3,
+        )
+        routing_info["end_to_end_latency_ms"] = round(
+            ms + routing_info["algorithmic_delay_ms"], 3
+        )
 
         self._maybe_unload_escalation()
 

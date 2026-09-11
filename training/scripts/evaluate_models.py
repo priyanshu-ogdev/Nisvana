@@ -16,6 +16,7 @@ import torch
 
 from data_forge.config import REPO_ROOT, DATA_DIR
 from training.models.model_loader import build_model_for_key
+from training.data.dataset_guard import validate_split_shards
 from training.utils.metrics import (
     compute_snr_db,
     compute_si_snr_db,
@@ -37,6 +38,8 @@ def evaluate_se_model(
     split: str = "val",
 ) -> Dict[str, Any]:
     """Runs rigorous SE evaluation across all test samples and returns metrics."""
+    if split in {"gentest", "test"}:
+        split = "test_generalization"
     print(f"\n========================================================================")
     print(f"EVALUATING SPEECH ENHANCEMENT MODEL: {model_key} (split={split})")
     print(f"========================================================================")
@@ -58,34 +61,29 @@ def evaluate_se_model(
 
     # Shard evaluation data ingestion
     shards_dir = DATA_DIR / "shards" / "speech_enhancement"
+    validate_split_shards([shards_dir], required_splits=(split,))
     test_samples = []
 
     try:
         from data_forge.exporter import AegisSpeechEnhancementIterableDataset
-        if shards_dir.exists() and list(shards_dir.glob(f"se-{split}-*.tar")):
-            ds = AegisSpeechEnhancementIterableDataset(shards_dir, split=split)
-            for idx, sample in enumerate(ds):
-                if idx >= num_samples:
-                    break
-                test_samples.append(sample)
-    except Exception:
-        pass
+        ds = AegisSpeechEnhancementIterableDataset(shards_dir, split=split)
+        for idx, sample in enumerate(ds):
+            if idx >= num_samples:
+                break
+            test_samples.append(sample)
+    except ImportError as exc:
+        raise ImportError(
+            "webdataset and its audio dependencies are required for real-data evaluation"
+        ) from exc
 
-    # If no physical shards present on machine, synthesize standardized test triplets
+    # Evaluation must never manufacture examples: synthetic fallback metrics
+    # hide split leakage and do not represent the real-recordings-only PRD.
     if not test_samples:
-        print(f"Note: Shards not on disk; synthesizing {num_samples} standardized evaluation triplets.")
-        classes = ["wind", "rotor_vehicle_drone", "tank_tracked", "jet_cockpit", "artillery_howitzer"]
-        torch.manual_seed(42)
-        for i in range(num_samples):
-            clean = torch.randn(1, 48000) * 0.1
-            noise = torch.randn(1, 48000) * 0.05
-            noisy = clean + noise
-            cls_name = classes[i % len(classes)]
-            test_samples.append({
-                "noisy.wav": noisy,
-                "clean.wav": clean,
-                "json": {"unified_class": cls_name, "split": split},
-            })
+        raise FileNotFoundError(
+            f"No real evaluation samples found for split={split!r} in {shards_dir}. "
+            "Generate the data-forge shards before evaluating; synthetic fallback "
+            "data is intentionally disabled."
+        )
 
     results = []
     class_results: Dict[str, List[Dict[str, float]]] = {}
@@ -162,6 +160,17 @@ def evaluate_se_model(
             "count": len(c_records),
         }
 
+    # Report a macro average as the primary generalization view as well as
+    # the sample-weighted aggregate.  Otherwise abundant broad classes can
+    # hide regressions on the thin operational classes.
+    class_balanced = {
+        "pesq": float(sum(row["pesq"] for row in per_class_summary.values()) / max(len(per_class_summary), 1)),
+        "stoi": float(sum(row["stoi"] for row in per_class_summary.values()) / max(len(per_class_summary), 1)),
+        "si_snr_db": float(
+            sum(row["si_snr_db"] for row in per_class_summary.values()) / max(len(per_class_summary), 1)
+        ),
+    }
+
     report = {
         "model_key": model_key,
         "split": split,
@@ -174,6 +183,7 @@ def evaluate_se_model(
             "snr_db": mean_snr,
             "dnsmos_ovrl": mean_dnsmos,
         },
+        "class_balanced": class_balanced,
         "per_class": per_class_summary,
     }
 
@@ -240,8 +250,13 @@ def main():
     parser.add_argument("--model", type=str, default="all",
                         choices=["all", "aegis-se-primary", "aegis-se-escalation", "aegis-se-crosscheck", "aegis-clf-gate", "aegis-aec-gate"],
                         help="Model key to evaluate or 'all'.")
-    parser.add_argument("--split", type=str, default="val", choices=["val", "gentest"],
-                        help="Data split to evaluate.")
+    parser.add_argument(
+        "--split",
+        type=str,
+        default="val",
+        choices=["val", "test_generalization", "gentest"],
+        help="Evaluation split; gentest is a compatibility alias.",
+    )
     parser.add_argument("--num-samples", type=int, default=20,
                         help="Number of samples to evaluate.")
     parser.add_argument("--checkpoint", type=str, default=None,

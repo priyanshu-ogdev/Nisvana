@@ -20,7 +20,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # Single source of truth: import SyncTier and UnifiedClass directly from data_forge.config
-from data_forge.config import SyncTier, UnifiedClass
+from data_forge.config import (
+    DEFAULT_MAX_SNR,
+    DEFAULT_MIN_SNR,
+    SyncTier,
+    TARGET_LUFS,
+    TARGET_SAMPLE_RATE,
+    UnifiedClass,
+)
 
 # SOTA upgrade pass config imports
 from training.callbacks.ema import EmaConfig
@@ -82,21 +89,27 @@ class DataForgeSyncConfig:
     Every field here corresponds directly to a path or convention already
     established and verified in data_forge/.
     """
-    shards_root: Path = Path("data/shards")
+    # Keep the default repository-relative so configs remain portable across
+    # worktrees and match the path used by the data-forge CLI.
+    shards_root: Path = field(default_factory=lambda: Path("data/shards"))
     speech_enhancement_shards: Path = field(init=False)
     classifier_shards: Path = field(init=False)
     aec_shards: Path = field(init=False)
     dataset_card_path: Path = field(init=False)
 
-    target_sample_rate: int = 48000          # data_forge.config.TARGET_SAMPLE_RATE
-    target_lufs: float = -23.0               # data_forge.config.TARGET_LUFS
+    target_sample_rate: int = TARGET_SAMPLE_RATE
+    target_lufs: float = TARGET_LUFS
     samples_per_shard: int = 2048            # data_forge.config.SAMPLES_PER_SHARD
 
     # Splits, matching the dedup/generalization discipline established in
     # the dataset review: WHAM!, MUSAN, LibriSpeech are NEVER in train.
     train_shard_glob: str = "*-train-*.tar"
     val_shard_glob: str = "*-val-*.tar"
-    generalization_shard_glob: str = "*-gentest-*.tar"
+    generalization_shard_glob: str = "*-test_generalization-*.tar"
+    required_splits: List[str] = field(
+        default_factory=lambda: ["train", "val", "test_generalization"]
+    )
+    require_real_shards: bool = True
 
     def __post_init__(self):
         self.speech_enhancement_shards = self.shards_root / "speech_enhancement"
@@ -111,6 +124,7 @@ class BaseModelConfig:
     model_key: str                            # e.g. "aegis-se-primary"
     config_version: int = 1
     seed: int = 1337
+    deterministic_training: bool = True
 
     data: DataForgeSyncConfig = field(default_factory=DataForgeSyncConfig)
 
@@ -164,6 +178,9 @@ class BaseModelConfig:
     # ceiling on naval/armored-vehicle/gunfire classes by providing a
     # second-opinion training signal from a different architecture.
     distillation_factor: float = 0.0  # Set >0 in per-model configs to enable
+
+    min_training_snr_db: float = DEFAULT_MIN_SNR
+    max_training_snr_db: float = DEFAULT_MAX_SNR
 
     def checkpoint_name(self, step: int) -> str:
         return f"{self.model_key}-v{self.config_version}-step{step:08d}.pt"
