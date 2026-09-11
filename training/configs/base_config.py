@@ -182,5 +182,14 @@ class BaseModelConfig:
     min_training_snr_db: float = DEFAULT_MIN_SNR
     max_training_snr_db: float = DEFAULT_MAX_SNR
 
+    def __post_init__(self):
+        # Keep model artifacts isolated when configs use the shared default.
+        if self.checkpoint_dir == Path("training/checkpoints"):
+            self.checkpoint_dir = self.checkpoint_dir / self.model_key
+        if self.log_dir == Path("training/runs"):
+            self.log_dir = self.log_dir / self.model_key
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+
     def checkpoint_name(self, step: int) -> str:
         return f"{self.model_key}-v{self.config_version}-step{step:08d}.pt"

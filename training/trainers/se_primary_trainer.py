@@ -29,6 +29,7 @@ class SePrimaryTrainer(BaseTrainer):
         config: Optional[SePrimaryConfig] = None,
         train_dataset: Optional[Any] = None,
         val_dataset: Optional[Any] = None,
+        teacher_checkpoint: Optional[Any] = None,
     ):
         cfg = config or SePrimaryConfig()
         super().__init__(cfg)
@@ -106,6 +107,16 @@ class SePrimaryTrainer(BaseTrainer):
                 self.teacher = build_model_for_key("aegis-se-crosscheck")
                 if hasattr(self, "device") and isinstance(self.device, torch.device):
                     self.teacher.to(self.device)
+                if teacher_checkpoint is not None:
+                    checkpoint = torch.load(
+                        teacher_checkpoint,
+                        map_location=self.device,
+                        weights_only=False,
+                    )
+                    teacher_state = checkpoint.get("model_state", checkpoint)
+                    if not isinstance(teacher_state, dict):
+                        raise ValueError("teacher checkpoint does not contain a model state dictionary")
+                    self.teacher.load_state_dict(teacher_state, strict=False)
                 self.teacher.eval()
                 for p in self.teacher.parameters():
                     p.requires_grad_(False)

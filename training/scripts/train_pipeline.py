@@ -433,7 +433,12 @@ def train_se_primary(args, teacher_ckpt: Optional[Path] = None) -> Path:
             train_ds, val_ds = None, None
 
     from training.trainers.se_primary_trainer import SePrimaryTrainer
-    trainer = SePrimaryTrainer(config=config, train_dataset=train_ds, val_dataset=val_ds)
+    trainer = SePrimaryTrainer(
+        config=config,
+        train_dataset=train_ds,
+        val_dataset=val_ds,
+        teacher_checkpoint=teacher_ckpt,
+    )
     print(f"[{config.model_key}] Initialized SePrimaryTrainer:")
     print(f"  - Precision: {config.precision} (Native Blackwell AMP)")
     print(f"  - QAT from Epoch 1: {config.qat_enabled}")
