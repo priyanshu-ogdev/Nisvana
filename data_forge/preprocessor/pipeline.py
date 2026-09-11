@@ -107,7 +107,12 @@ class PreprocessingPipeline:
 
             # Step 8: Acoustic fingerprint calculation
             fingerprint = self.deduplicator.compute_fingerprint(audio_norm, sr)
-            clip_id = f"{source_dataset}_{input_path.stem}"
+            # Ensure clip_id is unique across subdirectories (e.g. mad/gun/0.wav vs mad/cannon/0.wav)
+            parent_name = input_path.parent.name
+            if parent_name and parent_name != source_dataset and parent_name not in ("raw", "wavs", "audio"):
+                clip_id = f"{source_dataset}_{parent_name}_{input_path.stem}"
+            else:
+                clip_id = f"{source_dataset}_{input_path.stem}"
 
             # Step 7: Metadata tagging
             duration_sec = len(audio_norm) / sr

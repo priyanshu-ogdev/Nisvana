@@ -36,26 +36,41 @@ class Splitter:
         val_clips: List[ClipMetadata] = []
         test_clips: List[ClipMetadata] = []
 
+        # Strict split cache guaranteeing zero leakage across identical IDs or fingerprints
+        id_to_split: Dict[str, str] = {}
+        fp_to_split: Dict[str, str] = {}
+
         for clip in clips:
             # Rule 1: Generalization-only corpora are assigned strictly to generalization test
             if clip.is_generalization_only:
-                clip.split = "test_generalization"
-                test_clips.append(clip)
-                continue
+                target_split = "test_generalization"
+            elif clip.clip_id in id_to_split:
+                target_split = id_to_split[clip.clip_id]
+            elif clip.fingerprint and clip.fingerprint in fp_to_split:
+                target_split = fp_to_split[clip.fingerprint]
+            else:
+                # Rule 2: Deterministic hash-based assignment using fingerprint or clip_id
+                # Ensures duplicate or same-session clips map to the identical split
+                hash_key = clip.fingerprint if clip.fingerprint else clip.clip_id
+                hash_val = int(hashlib.md5(hash_key.encode()).hexdigest(), 16) % 10000 / 10000.0
 
-            # Rule 2: Deterministic hash-based assignment using fingerprint or clip_id
-            # Ensures duplicate or same-session clips map to the identical split
-            hash_key = clip.fingerprint if clip.fingerprint else clip.clip_id
-            hash_val = int(hashlib.md5(hash_key.encode()).hexdigest(), 16) % 10000 / 10000.0
+                if hash_val < self.train_ratio:
+                    target_split = "train"
+                elif hash_val < (self.train_ratio + self.val_ratio):
+                    target_split = "val"
+                else:
+                    target_split = "test_generalization"
 
-            if hash_val < self.train_ratio:
-                clip.split = "train"
+            clip.split = target_split
+            id_to_split[clip.clip_id] = target_split
+            if clip.fingerprint:
+                fp_to_split[clip.fingerprint] = target_split
+
+            if target_split == "train":
                 train_clips.append(clip)
-            elif hash_val < (self.train_ratio + self.val_ratio):
-                clip.split = "val"
+            elif target_split == "val":
                 val_clips.append(clip)
             else:
-                clip.split = "test_generalization"
                 test_clips.append(clip)
 
         splits_dict = {
