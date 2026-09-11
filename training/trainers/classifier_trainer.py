@@ -62,6 +62,11 @@ class ClassifierTrainer(BaseTrainer):
         self.model.train()
         self.optimizer.zero_grad()
 
+        # Rev 3 fix: apply warmup + cosine-decay schedule
+        current_lr = self.get_lr(self.step)
+        for pg in self.optimizer.param_groups:
+            pg["lr"] = current_lr
+
         if isinstance(batch, dict):
             wav = batch.get("wav", batch.get("audio"))
             if "label" in batch:
@@ -114,7 +119,7 @@ class ClassifierTrainer(BaseTrainer):
         preds = torch.argmax(logits, dim=-1)
         acc = (preds == label).float().mean().item()
 
-        return {"loss": loss.item(), "accuracy": acc}
+        return {"loss": loss.item(), "accuracy": acc, "lr": current_lr}
 
     def eval_step(self, batch: Any) -> dict:
         if not batch:

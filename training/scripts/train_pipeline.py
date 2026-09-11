@@ -47,7 +47,12 @@ def parse_args():
         choices=["all", "se_primary", "se_escalation", "se_crosscheck", "classifier", "aec"],
         help="Target model to train, or 'all' for full sequential ensemble execution",
     )
-    parser.add_argument("--epochs", type=int, default=None, help="Override default max_epochs")
+    parser.add_argument(
+        "--epochs", type=int, default=None,
+        help="Override total_finetune_steps by epochs (converted via steps_per_epoch, default 1000/epoch). "
+             "Every AEGIS model config is step-based (total_finetune_steps), not epoch-based -- this flag "
+             "is a convenience conversion, not a native config field."
+    )
     parser.add_argument("--batch-size", type=int, default=None, help="Batch size per step")
     parser.add_argument("--grad-accum", type=int, default=4, help="Gradient accumulation steps")
     parser.add_argument("--lr", type=float, default=None, help="Learning rate override")
@@ -90,6 +95,20 @@ def parse_args():
     parser.add_argument("--force", action="store_true", help="Force execution (required for Model 5 AEC)")
     parser.add_argument("--dry-run", action="store_true", help="Perform architecture initialization dry run without training loop")
     return parser.parse_args()
+
+
+def _apply_epoch_override(config, args) -> None:
+    """
+    Converts --epochs into config.total_finetune_steps, the field every
+    AEGIS BaseModelConfig subclass actually declares. There is no
+    `max_epochs` field anywhere in the config schema -- assigning one
+    directly (the old behavior) either silently did nothing useful or,
+    when read back unconditionally without --epochs being passed,
+    crashed with AttributeError before the training loop ever started.
+    """
+    if args.epochs:
+        steps_per_epoch = getattr(config, "steps_per_epoch", 1000)
+        config.total_finetune_steps = args.epochs * steps_per_epoch
 
 
 def se_collate_fn(batch):
@@ -315,8 +334,7 @@ def train_se_crosscheck(args) -> Path:
     print(">>> [STAGE 1/5] TRAINING MODEL 3: CLEANUMAMBA SSM (TEACHER)")
     print("=" * 80)
     config = SeCrosscheckConfig()
-    if args.epochs:
-        config.max_epochs = args.epochs
+    _apply_epoch_override(config, args)
     if args.lr:
         config.lr = args.lr
     if args.resume:
@@ -336,11 +354,11 @@ def train_se_crosscheck(args) -> Path:
 
     if not args.dry_run:
         if train_ds:
-            print(f"[{config.model_key}] Starting training loop for {config.max_epochs} epochs...")
+            print(f"[{config.model_key}] Starting training loop for {config.total_finetune_steps} steps...")
             from torch.utils.data import DataLoader
             batch_size = args.batch_size or getattr(config, "batch_size", 16)
             train_loader = DataLoader(train_ds, batch_size=batch_size, collate_fn=se_collate_fn)
-            loop_result = trainer.run_training_loop(train_loader, epochs=config.max_epochs)
+            loop_result = trainer.run_training_loop(train_loader, epochs=args.epochs)
             print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
         else:
             print(f"[{config.model_key}] WARNING: Shards not loaded or webdataset not installed. Skipping loop.")
@@ -360,8 +378,7 @@ def train_se_primary(args, teacher_ckpt: Optional[Path] = None) -> Path:
     print(">>> [STAGE 2/5] TRAINING MODEL 1: DEEPFILTERNET3 BASE (0ms LOOKAHEAD)")
     print("=" * 80)
     config = SePrimaryConfig()
-    if args.epochs:
-        config.max_epochs = args.epochs
+    _apply_epoch_override(config, args)
     if args.lr:
         config.lr = args.lr
     if args.resume:
@@ -390,12 +407,12 @@ def train_se_primary(args, teacher_ckpt: Optional[Path] = None) -> Path:
 
     if not args.dry_run:
         if train_ds:
-            print(f"[{config.model_key}] Starting training loop for {config.max_epochs} epochs...")
+            print(f"[{config.model_key}] Starting training loop for {config.total_finetune_steps} steps...")
             from torch.utils.data import DataLoader
             batch_size = args.batch_size or getattr(config, "batch_size", 16)
             train_loader = DataLoader(train_ds, batch_size=batch_size, collate_fn=se_collate_fn)
             val_loader = DataLoader(val_ds, batch_size=batch_size, collate_fn=se_collate_fn) if val_ds else None
-            loop_result = trainer.run_training_loop(train_loader, val_loader, epochs=config.max_epochs)
+            loop_result = trainer.run_training_loop(train_loader, val_loader, epochs=args.epochs)
             print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
         else:
             print(f"[{config.model_key}] WARNING: Shards not loaded or webdataset not installed. Skipping loop.")
@@ -416,8 +433,7 @@ def train_se_escalation(args) -> Path:
     print(">>> [STAGE 3/5] TRAINING MODEL 2: DEEPFILTERNET3 ESCALATION (10ms LOOKAHEAD)")
     print("=" * 80)
     config = SeEscalationConfig()
-    if args.epochs:
-        config.max_epochs = args.epochs
+    _apply_epoch_override(config, args)
     if args.lr:
         config.lr = args.lr
     if args.resume:
@@ -438,11 +454,11 @@ def train_se_escalation(args) -> Path:
 
     if not args.dry_run:
         if train_ds:
-            print(f"[{config.model_key}] Starting training loop for {config.max_epochs} epochs...")
+            print(f"[{config.model_key}] Starting training loop for {config.total_finetune_steps} steps...")
             from torch.utils.data import DataLoader
             batch_size = args.batch_size or getattr(config, "batch_size", 16)
             train_loader = DataLoader(train_ds, batch_size=batch_size, collate_fn=se_collate_fn)
-            loop_result = trainer.run_training_loop(train_loader, epochs=config.max_epochs)
+            loop_result = trainer.run_training_loop(train_loader, epochs=args.epochs)
             print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
         else:
             print(f"[{config.model_key}] WARNING: Shards not loaded or webdataset not installed. Skipping loop.")
@@ -463,8 +479,7 @@ def train_classifier(args) -> Path:
     print(">>> [STAGE 4/5] TRAINING MODEL 4: ACOUSTIC GATING CLASSIFIER")
     print("=" * 80)
     config = ClassifierConfig()
-    if args.epochs:
-        config.max_epochs = args.epochs
+    _apply_epoch_override(config, args)
     if args.lr:
         config.lr = args.lr
     if args.resume:
@@ -482,11 +497,11 @@ def train_classifier(args) -> Path:
 
     if not args.dry_run:
         if train_ds:
-            print(f"[{config.model_key}] Starting training loop for {config.max_epochs} epochs...")
+            print(f"[{config.model_key}] Starting training loop for {config.total_finetune_steps} steps...")
             from torch.utils.data import DataLoader
             batch_size = args.batch_size or getattr(config, "batch_size", 32)
             train_loader = DataLoader(train_ds, batch_size=batch_size, collate_fn=clf_collate_fn)
-            loop_result = trainer.run_training_loop(train_loader, epochs=config.max_epochs)
+            loop_result = trainer.run_training_loop(train_loader, epochs=args.epochs)
             print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
         else:
             print(f"[{config.model_key}] WARNING: Shards not loaded or webdataset not installed. Skipping loop.")
@@ -512,6 +527,7 @@ def train_aec(args) -> Optional[Path]:
         return Path(config.pretrained_checkpoint)
 
     print(f"[{config.model_key}] FORCED fine-tuning initiated.")
+    _apply_epoch_override(config, args)
     try:
         from data_forge.exporter import AegisAecIterableDataset
         train_ds = AegisAecIterableDataset(config.data.aec_shards, split="train")
@@ -523,11 +539,11 @@ def train_aec(args) -> Optional[Path]:
 
     if not args.dry_run:
         if train_ds:
-            print(f"[{config.model_key}] Starting training loop for {config.max_epochs} epochs...")
+            print(f"[{config.model_key}] Starting training loop for {config.total_finetune_steps} steps...")
             from torch.utils.data import DataLoader
             batch_size = args.batch_size or getattr(config, "batch_size", 16)
             train_loader = DataLoader(train_ds, batch_size=batch_size, collate_fn=aec_collate_fn)
-            loop_result = trainer.run_training_loop(train_loader, epochs=config.max_epochs)
+            loop_result = trainer.run_training_loop(train_loader, epochs=args.epochs)
             print(f"[{config.model_key}] Training completed. Total steps: {loop_result.get('total_steps', 0)}")
         else:
             print(f"[{config.model_key}] WARNING: Shards not loaded or webdataset not installed. Skipping loop.")

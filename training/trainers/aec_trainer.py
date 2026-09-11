@@ -54,6 +54,11 @@ class AecGateTrainer(BaseTrainer):
         self.model.train()
         self.optimizer.zero_grad()
 
+        # Rev 3 fix: apply warmup + cosine decay with lr_placeholder
+        current_lr = self.get_lr(self.step, base_lr=getattr(self.config, "lr_placeholder", 1e-4))
+        for pg in self.optimizer.param_groups:
+            pg["lr"] = current_lr
+
         if isinstance(batch, dict):
             mic = batch.get("mic.wav", batch.get("mic"))
             farend = batch.get("farend.wav", batch.get("farend"))
@@ -97,7 +102,7 @@ class AecGateTrainer(BaseTrainer):
         loss.backward()
         self.optimizer.step()
 
-        return {"loss": loss.item(), "erle_proxy": 1.0 / (loss.item() + 1e-6)}
+        return {"loss": loss.item(), "erle_proxy": 1.0 / (loss.item() + 1e-6), "lr": current_lr}
 
     def eval_step(self, batch: Any) -> dict:
         if not batch:

@@ -94,12 +94,21 @@ class BaseTrainer(ABC):
             return sample_snr_for_epoch(self.snr_curriculum, epoch, self.curriculum_rng)
         return None
 
-    def get_lr(self, step: int) -> float:
-        """Computes learning rate with linear warmup and cosine decay."""
+    def get_lr(self, step: int, base_lr: Optional[float] = None) -> float:
+        """
+        Computes learning rate with linear warmup and cosine decay.
+
+        `base_lr` lets a trainer override the config field used as the
+        peak LR -- needed for AecGateConfig, whose hyperparameters are
+        explicitly named `*_placeholder` (unverified against the DeepVQE
+        paper, per that config's own docstring) rather than the standard
+        `lr` field every other model config uses. Defaults to
+        `self.config.lr` when not given.
+        """
         import math
-        base_lr = getattr(self.config, "lr", 1e-3)
+        base_lr = base_lr if base_lr is not None else getattr(self.config, "lr", 1e-3)
         warmup_steps = getattr(self.config, "lr_warmup_steps", 5000)
-        total_steps = getattr(self.config, "total_finetune_steps", getattr(self.config, "max_epochs", 50) * 1000)
+        total_steps = getattr(self.config, "total_finetune_steps", 100_000)
 
         if step < warmup_steps:
             return base_lr * float(step) / float(max(1, warmup_steps))
@@ -322,13 +331,42 @@ class BaseTrainer(ABC):
         epochs: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
-        Executes training steps across epochs (or a single pass if epochs=None/1),
-        evaluating and checkpointing according to the configured cadence, with early stopping guard.
+        Executes training steps up to `config.total_finetune_steps` -- the
+        authoritative stopping criterion every AEGIS model config declares --
+        looping over `batches` as many times as needed to reach it. Every
+        model's documented step budget (e.g. CleanUMamba's 150K fine-tune
+        steps) is only real if something actually stops the loop there;
+        previously `total_finetune_steps` was read solely inside get_lr()
+        for the cosine-decay denominator and never checked against
+        self.step, so a run would silently terminate after exactly one
+        pass over `batches` (or loop forever on a streaming/infinite
+        iterable) regardless of what the config claimed.
+
+        If `epochs` is explicitly passed (e.g. via a manual --epochs CLI
+        override), that takes precedence and the loop instead runs for
+        exactly that many passes over `batches`, ignoring the step target --
+        an intentional, explicit opt-out, not the default behavior.
         """
         step_records = []
         checkpoints_saved = []
         early_stopped = False
-        num_epochs = epochs if (epochs is not None and epochs > 0) else 1
+        reached_target = False
+
+        total_target_steps = getattr(self.config, "total_finetune_steps", None)
+        if epochs is not None and epochs > 0:
+            num_epochs = epochs
+            total_target_steps = None  # explicit epoch override supersedes the step target
+        elif isinstance(batches, (list, tuple)):
+            # In-memory batch sequences (e.g. unit tests, synthetic lists)
+            # execute a single pass unless epochs is explicitly passed.
+            num_epochs = 1
+        else:
+            # Step-driven default: allow wrapping `batches` many times if it's
+            # a finite/shard-based iterable. The inner break below (once
+            # total_target_steps is reached) is what actually stops the loop --
+            # this outer bound just guards against a config with no step
+            # target and a finite dataset silently running one bare pass.
+            num_epochs = 1_000_000 if total_target_steps else 1
 
         for epoch in range(num_epochs):
             for batch in batches:
@@ -345,7 +383,10 @@ class BaseTrainer(ABC):
                     metrics_str = f"loss: {loss_val:.4f}"
                     if "accuracy" in loss_dict:
                         metrics_str += f" | acc: {loss_dict['accuracy']:.4f}"
-                    print(f"[{self.config.model_key}] Epoch {epoch + 1}/{num_epochs} | Step {self.step} | {metrics_str}")
+                    if total_target_steps:
+                        print(f"[{self.config.model_key}] Step {self.step}/{total_target_steps} | {metrics_str}")
+                    else:
+                        print(f"[{self.config.model_key}] Epoch {epoch + 1}/{num_epochs} | Step {self.step} | {metrics_str}")
 
                 if self.should_eval() and val_batches:
                     eval_metrics = {}
@@ -381,8 +422,15 @@ class BaseTrainer(ABC):
                     if saved:
                         checkpoints_saved.append(saved)
 
+                if total_target_steps and self.step >= total_target_steps:
+                    reached_target = True
+                    break
+
             if early_stopped:
                 print(f"[{self.config.model_key}] Early stopping triggered at epoch {epoch + 1}, step {self.step}.")
+                break
+            if reached_target:
+                print(f"[{self.config.model_key}] Reached total_finetune_steps={total_target_steps}, stopping.")
                 break
 
         return {
