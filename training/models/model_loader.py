@@ -50,13 +50,21 @@ def _run_gru_fp32(
         else nullcontext()
     )
     with amp_off:
+        # Avoid paying for a handled cuDNN exception on every training step.
+        # This attribute is local to the module instance and therefore does
+        # not affect other GRUs or model processes.
+        if getattr(gru, "_aegis_force_native", False):
+            with torch.backends.cudnn.flags(enabled=False):
+                return gru(sequence, hidden)
         try:
             return gru(sequence, hidden)
         except RuntimeError as exc:
             if "CUDNN_STATUS_NOT_SUPPORTED" not in str(exc):
                 raise
+            gru._aegis_force_native = True
             logger.warning(
-                "cuDNN GRU rejected a contiguous FP32 input; using native GRU kernel."
+                "cuDNN GRU rejected a contiguous FP32 input; using native GRU kernel "
+                "for this model instance."
             )
             with torch.backends.cudnn.flags(enabled=False):
                 return gru(sequence, hidden)
