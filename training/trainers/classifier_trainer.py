@@ -107,6 +107,9 @@ class ClassifierTrainer(BaseTrainer):
             wav = wav.to(self.device)
             label = label.to(self.device)
 
+        wav = wav.contiguous()
+        label = label.contiguous()
+
         logits = self.model(wav)
         loss = self.criterion(logits, label)
         loss.backward()

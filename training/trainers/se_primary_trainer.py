@@ -165,6 +165,9 @@ class SePrimaryTrainer(BaseTrainer):
             noisy = noisy.to(self.device)
             clean = clean.to(self.device)
 
+        noisy = noisy.contiguous()
+        clean = clean.contiguous()
+
         amp_enabled = getattr(self, "use_amp", False) and getattr(self, "device", None) is not None and getattr(self.device, "type", "") == "cuda"
         amp_dtype = getattr(self, "amp_dtype", torch.bfloat16 if getattr(self, "scaler", None) is None else torch.float16)
 

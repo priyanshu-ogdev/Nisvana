@@ -97,6 +97,10 @@ class AecGateTrainer(BaseTrainer):
             farend = farend.to(self.device)
             nearend = nearend.to(self.device)
 
+        mic = mic.contiguous()
+        farend = farend.contiguous()
+        nearend = nearend.contiguous()
+
         out = self.model(mic, farend)
         loss = self.criterion(out, nearend)
         loss.backward()

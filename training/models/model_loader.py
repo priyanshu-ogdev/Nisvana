@@ -294,9 +294,9 @@ class DeepFilterNet3Wrapper(nn.Module):
         if explicit_mode:
             x_padded, new_input_context = self._pad_with_context(x.to(conv1_dtype), input_context, left_pad, right_pad)
             h = F.relu(self.conv1(x_padded))
-            h = h.transpose(1, 2)
-            h, new_hidden = self.gru(h.float(), hidden_state)
-            h = h.transpose(1, 2)
+            h = h.transpose(1, 2).contiguous()
+            h, new_hidden = self.gru(h.float().contiguous(), hidden_state.contiguous() if hidden_state is not None else None)
+            h = h.transpose(1, 2).contiguous()
             h_padded, new_hidden_context = self._pad_with_context(h, hidden_context, left_pad, right_pad)
             out = self.conv2(h_padded.to(conv2_dtype)).view(orig_shape).float()
             return out, new_hidden, new_input_context, new_hidden_context
@@ -307,9 +307,9 @@ class DeepFilterNet3Wrapper(nn.Module):
         if self.training and x.shape[-1] >= 2048:
             x_padded, _ = self._pad_with_context(x.to(conv1_dtype), None, left_pad, right_pad)
             h = F.relu(self.conv1(x_padded))
-            h = h.transpose(1, 2)
-            h, _ = self.gru(h.float(), None)
-            h = h.transpose(1, 2)
+            h = h.transpose(1, 2).contiguous()
+            h, _ = self.gru(h.float().contiguous(), None)
+            h = h.transpose(1, 2).contiguous()
             h_padded, _ = self._pad_with_context(h, None, left_pad, right_pad)
             out = self.conv2(h_padded.to(conv2_dtype))
             return out.view(orig_shape).float()
@@ -340,15 +340,17 @@ class DeepFilterNet3Wrapper(nn.Module):
                 right_context=right_ctx.to(conv1_dtype),
             )
             h_p = F.relu(self.conv1(x_padded_p))
-            h_p = h_p.transpose(1, 2)
+            h_p = h_p.transpose(1, 2).contiguous()
 
             curr_state = self.hidden_state
             if curr_state is not None:
                 if curr_state.shape[1] != pending_x.shape[0] or curr_state.device != pending_x.device:
                     curr_state = None
+                else:
+                    curr_state = curr_state.contiguous()
 
-            h_p, self.hidden_state = self.gru(h_p.float(), curr_state)
-            h_p = h_p.transpose(1, 2)
+            h_p, self.hidden_state = self.gru(h_p.float().contiguous(), curr_state)
+            h_p = h_p.transpose(1, 2).contiguous()
 
             h_padded_p, self._hidden_context = self._pad_with_context(
                 h_p, self._hidden_context, left_pad, right_pad,
@@ -369,15 +371,17 @@ class DeepFilterNet3Wrapper(nn.Module):
         # Standard causal path (Model 1 always, Model 2 first-chunk only)
         x_padded, self._input_context = self._pad_with_context(x.to(conv1_dtype), self._input_context, left_pad, right_pad)
         h = F.relu(self.conv1(x_padded))
-        h = h.transpose(1, 2)
+        h = h.transpose(1, 2).contiguous()
 
         curr_state = self.hidden_state
         if curr_state is not None:
             if curr_state.shape[1] != x.shape[0] or curr_state.device != x.device:
                 curr_state = None
+            else:
+                curr_state = curr_state.contiguous()
 
-        h, self.hidden_state = self.gru(h.float(), curr_state)
-        h = h.transpose(1, 2)
+        h, self.hidden_state = self.gru(h.float().contiguous(), curr_state)
+        h = h.transpose(1, 2).contiguous()
         h_padded, self._hidden_context = self._pad_with_context(h, self._hidden_context, left_pad, right_pad)
         out = self.conv2(h_padded.to(conv2_dtype))
         return out.view(orig_shape).float()
@@ -454,9 +458,9 @@ class CleanUMambaWrapper(nn.Module):
         if explicit_mode:
             x_padded, new_input_context = self._pad_with_context(x.to(enc_dtype), input_context, left_n)
             h = F.relu(self.enc(x_padded))
-            h = h.transpose(1, 2)
-            h, new_hidden = self.gru_mamba(h.float(), hidden_state)
-            h = h.transpose(1, 2)
+            h = h.transpose(1, 2).contiguous()
+            h, new_hidden = self.gru_mamba(h.float().contiguous(), hidden_state.contiguous() if hidden_state is not None else None)
+            h = h.transpose(1, 2).contiguous()
             out = self.dec(h.to(dec_dtype))[..., :orig_len]
             return out.view(orig_shape).float(), new_hidden, new_input_context
 
@@ -465,24 +469,26 @@ class CleanUMambaWrapper(nn.Module):
         if self.training and x.shape[-1] >= 2048:
             x_padded, _ = self._pad_with_context(x.to(enc_dtype), None, left_n)
             h = F.relu(self.enc(x_padded))
-            h = h.transpose(1, 2)
-            h, _ = self.gru_mamba(h.float(), None)
-            h = h.transpose(1, 2)
+            h = h.transpose(1, 2).contiguous()
+            h, _ = self.gru_mamba(h.float().contiguous(), None)
+            h = h.transpose(1, 2).contiguous()
             out = self.dec(h.to(dec_dtype))[..., :orig_len]
             return out.view(orig_shape).float()
 
         # Internal-state mode for streaming
         x_padded, self._input_context = self._pad_with_context(x.to(enc_dtype), self._input_context, left_n)
         h = F.relu(self.enc(x_padded))
-        h = h.transpose(1, 2)
+        h = h.transpose(1, 2).contiguous()
 
         curr_state = self.hidden_state
         if curr_state is not None:
             if curr_state.shape[1] != x.shape[0] or curr_state.device != x.device:
                 curr_state = None
+            else:
+                curr_state = curr_state.contiguous()
 
-        h, self.hidden_state = self.gru_mamba(h.float(), curr_state)
-        h = h.transpose(1, 2)
+        h, self.hidden_state = self.gru_mamba(h.float().contiguous(), curr_state)
+        h = h.transpose(1, 2).contiguous()
         out = self.dec(h.to(dec_dtype))
         out = out[..., :orig_len]
         return out.view(orig_shape).float()

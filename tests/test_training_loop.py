@@ -896,5 +896,77 @@ class TestDataLoaderCollationAndIteration:
         res_aec50 = t_aec.training_step(batch_aec)
         assert abs(res_aec50["lr"] - 1e-4) < 1e-5
 
+    def test_gru_mamba_and_deepfilternet_contiguity_with_bfloat16_and_non_contiguous_inputs(self):
+        import torch
+        from training.models.model_loader import CleanUMambaWrapper, DeepFilterNet3Wrapper
+        from training.trainers.se_crosscheck_trainer import SeCrosscheckTrainer
+        from training.configs.se_crosscheck_config import SeCrosscheckConfig
+
+        # Test CleanUMambaWrapper
+        mamba = CleanUMambaWrapper(target_param_count="1M")
+        mamba.train()
+
+        # Intercept input to gru_mamba to verify it is strictly contiguous
+        contiguity_checked = {"called": 0}
+        orig_forward = mamba.gru_mamba.forward
+
+        def hooked_forward(input, hx=None):
+            assert input.is_contiguous(), "Input to gru_mamba MUST be contiguous to satisfy cuDNN requirements!"
+            contiguity_checked["called"] += 1
+            return orig_forward(input, hx)
+
+        mamba.gru_mamba.forward = hooked_forward
+
+        # Create deliberately non-contiguous input (e.g. via transpose/slicing)
+        non_contiguous_audio = torch.randn(2, 1, 8192)[:, :, ::2]
+        assert not non_contiguous_audio.is_contiguous()
+
+        # Full-clip batch training mode
+        out = mamba(non_contiguous_audio)
+        assert out.shape == non_contiguous_audio.shape
+        assert contiguity_checked["called"] > 0
+
+        # Streaming mode (eval)
+        mamba.eval()
+        mamba.reset_state()
+        chunk = torch.randn(2, 1, 480)[:, :, ::2]
+        out_chunk = mamba(chunk)
+        assert out_chunk.shape == chunk.shape
+
+        # Explicit mode
+        out_exp, h_new, ctx_new = mamba(chunk, hidden_state=torch.zeros(1, 2, 32), input_context=torch.zeros(2, 1, 63))
+        assert out_exp.shape == chunk.shape
+
+        # Test DeepFilterNet3Wrapper
+        df_model = DeepFilterNet3Wrapper(df_lookahead=2, conv_lookahead=2)
+        df_model.train()
+        df_contiguity_checked = {"called": 0}
+        orig_df_forward = df_model.gru.forward
+
+        def hooked_df_forward(input, hx=None):
+            assert input.is_contiguous(), "Input to DeepFilterNet3 gru MUST be contiguous to satisfy cuDNN requirements!"
+            df_contiguity_checked["called"] += 1
+            return orig_df_forward(input, hx)
+
+        df_model.gru.forward = hooked_df_forward
+
+        out_df = df_model(non_contiguous_audio)
+        assert out_df.shape == non_contiguous_audio.shape
+        assert df_contiguity_checked["called"] > 0
+
+        # Verify SeCrosscheckTrainer training_step works end-to-end with non-contiguous batch
+        cfg = SeCrosscheckConfig()
+        cfg.device = "cpu"
+        cfg.total_finetune_steps = 100
+        trainer = SeCrosscheckTrainer(config=cfg)
+
+        batch = {
+            "noisy.wav": torch.randn(2, 8192)[:, ::2],  # non-contiguous
+            "clean.wav": torch.randn(2, 8192)[:, ::2],  # non-contiguous
+        }
+        res = trainer.training_step(batch)
+        assert "loss" in res and res["loss"] >= 0.0
+
+
 
 
