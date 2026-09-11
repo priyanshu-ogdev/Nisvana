@@ -3,7 +3,12 @@
 > **Location:** `training/`  
 > **Hardware Target:** NVIDIA DGX Spark GB10 (Grace Blackwell, CUDA 13, Ubuntu Linux)  
 > **Acoustic Standards:** 48,000 Hz Fullband Audio, ITU-T P.862.2 (Wideband PESQ), Taal et al. (STOI)  
-> **Core Architectures:** DeepFilterNet3 (Models 1 & 2), CleanUMamba SSM (Model 3), Conformer Gate (Model 4), Gated AEC (Model 5)
+> **Core Architectures:** DeepFilterNet3 (Models 1 & 2), CleanUMamba SSM (Model 3), Conv1d acoustic gate (Model 4), Gated AEC (Model 5)
+
+> **Current contract:** Read [`docs/ML_PIPELINE_RUNBOOK.md`](../docs/ML_PIPELINE_RUNBOOK.md)
+> before launching a production run. It supersedes older example commands in
+> this page where they differ from the unified `scripts/07_train.sh` launcher,
+> the 480-sample streaming contract, or the current split/checkpoint layout.
 
 ---
 
@@ -29,7 +34,7 @@ The `training` package is the deep learning engine for Project AEGIS. It trains,
 |  +---------------------------------------------------------------------------------------------+  |
 |  | 2. MODEL ARCHITECTURES & FACTORY (training/models/)                                         |  |
 |  |    Model 1: DeepFilterNet3 Base (Causal, 0ms lookahead, 1.8M params)                        |  |
-|  |    Model 2: DeepFilterNet3 Escalation (20ms lookahead, 2.3M params)                         |  |
+|  |    Model 2: DeepFilterNet3 Escalation (1-chunk / 10ms output delay)                         |  |
 |  |    Model 3: CleanUMamba (Selective State Space Model, long-horizon transient tracking)      |  |
 |  |    Model 4: Gating Classifier (3-way Conformer/Conv1d: harmonic, transient, speech)        |  |
 |  |    Model 5: Gated AEC (Dual-branch complex mask post-filter, ERLE > 30 dB)                  |  |
@@ -164,6 +169,13 @@ never oversampled..
 
 ## 3. Training Execution & CLI Reference
 
+The production path is `scripts/07_train.sh`, not the individual trainer
+modules. It validates the existing WebDataset shard root, checks CUDA when
+requested, prints the shard inventory, and then invokes the unified
+dependency-ordered pipeline. The individual `training.scripts.train_*`
+modules remain useful for focused development, but they do not replace the
+production preflight and orchestration.
+
 Launch training for any model using the scripts in `training/scripts/`:
 
 ```bash
@@ -175,7 +187,7 @@ python -m training.scripts.train_se_primary \
     --lr 0.0005 \
     --device cuda
 
-# Model 2: DeepFilterNet3 Escalation (20ms lookahead)
+# Model 2: DeepFilterNet3 Escalation (1-chunk / 10ms output delay)
 python -m training.scripts.train_se_escalation \
     --epochs 80 \
     --batch-size 32 \

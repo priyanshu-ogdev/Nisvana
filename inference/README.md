@@ -8,6 +8,12 @@
 
 ## 1. Executive Summary & Runtime Architecture
 
+> **Implementation note:** The authoritative end-to-end workflow, backend
+> selection, state contract, and SIH verification procedure are in
+> [docs/ML_PIPELINE_RUNBOOK.md](../docs/ML_PIPELINE_RUNBOOK.md). This file
+> describes the inference components; the runbook takes precedence where an
+> older example or estimate differs from the current CLI.
+
 The `inference` package is an ultra-low-latency streaming inference engine and active noise cancellation (ANC) suite. It transitions models trained in `training/` into mission-critical, real-time edge deployment pipelines.
 
 The runtime coordinates four synchronized systems:
@@ -36,8 +42,8 @@ The runtime coordinates four synchronized systems:
 |  |    Runs Model 4 Gating Classifier on 200ms audio windows:                                   |  |
 |  |    * SNR > 25 dB (Clean Speech)     ──> Bypass Mode (Battery-Saving Passthrough)            |  |
 |  |    * Moderate / Stationary Noise   ──> Model 1: DeepFilterNet3 Base (0ms lookahead)         |  |
-|  |    * Severe Noise / Sudden Blast   ──> Model 2: DeepFilterNet3 Escalation (20ms lookahead)  |  |
-|  |    * Dense Harmonic Machinery      ──> Model 3: CleanUMamba SSM (Stateful Memory)           |  |
+|  |    * Severe Noise / Sudden Blast   ──> Model 2: DeepFilterNet3 Escalation (10ms delay)      |  |
+|  |    * Dense Harmonic Machinery      ──> Primary/escalation path; Model 3 is teacher/fallback   |  |
 |  |    * Crossfade Smoother: 20ms Hanning crossfade eliminates handover clicks and pops         |  |
 |  +---------------------------------------------------------------------------------------------+  |
 |                                            │                                                      |
@@ -85,7 +91,9 @@ The runtime coordinates four synchronized systems:
   - **Dynamic Branch Escalation**: Automatically routes to the optimal model based on detected threat profiles:
     - Normal background $\rightarrow$ Model 1 (zero lookahead).
     - Sudden blast or gunfire onset $\rightarrow$ Model 2 (absorbs transient via 10ms lookahead output-delay buffer).
-    - Sustained tank engine / drone harmonics $\rightarrow$ Model 3 (CleanUMamba SSM).
+    - Sustained tank engine / drone harmonics $\rightarrow$ Model 1 by default;
+      Model 3 is the trained cross-check/teacher and can be deployed as an
+      explicit fallback, but is not silently run as a third hot-path model.
   - **Intelligibility Floor Safeguard**: When speech dominance is detected (`speech_dominant`), an intelligibility floor preserves $\ge 15\%$ ($\text{dry\_mix} \ge 0.15$) of the uncorrupted input signal in both synchronous and pipelined routes, preventing neural over-suppression from truncating quiet consonant tails.
   - **Asymmetric Hysteresis**: Escalation transitions trigger immediately (1 chunk) to shield against hostile blasts, while bypass transitions require **15 consecutive clean chunks** (150ms) to confirm genuine silence, eliminating route flapping.
   - **Memory Safeguard (Lazy Loading & 30s Idle Unload)**: Heavy escalation models (Model 2, Model 3) are lazy-loaded only when triggered and automatically unloaded if idle for $>30.0$ seconds (`escalation_idle_unload_sec=30.0`), enforcing a strict $\le 4\text{--}8\text{ GB}$ VRAM/RAM ceiling.
@@ -118,10 +126,10 @@ Located in `inference/scripts/`:
 Stream live full-duplex audio from local microphone hardware to headphones with active noise cancellation:
 ```bash
 python -m inference.scripts.live_mic_anc \
-    --engine onnx \
-    --provider cuda \
-    --anc-enable \
-    --chunk-size 480
+    --backend onnx \
+    --onnx-dir data/onnx_models \
+    --onnx-provider CUDAExecutionProvider \
+    --onnx-provider CPUExecutionProvider
 ```
 
 ### 3.2 Offline Batch Audio Enhancement (`enhance_audio.py`)
@@ -130,8 +138,9 @@ Enhance noisy military audio files using the trained escalation router:
 python -m inference.scripts.enhance_audio \
     --input noisy_cockpit.wav \
     --output clean_cockpit.wav \
-    --engine onnx \
-    --router
+    --model router \
+    --backend onnx \
+    --onnx-dir data/onnx_models
 ```
 
 ### 3.3 Model ONNX & TensorRT Export (`export_onnx.py`)

@@ -10,6 +10,12 @@
 
 Project AEGIS (Nisvana) is an end-to-end, production-grade acoustic intelligence stack engineered for extreme and hostile acoustic environments (tracked combat vehicles, artillery positions, supersonic cockpits, naval engine rooms, high-wind UAV operational envelopes, and urban emergency scenarios).
 
+> **Implementation runbook:** [`docs/ML_PIPELINE_RUNBOOK.md`](docs/ML_PIPELINE_RUNBOOK.md)
+> is the authoritative guide for the verified data → training → export →
+> streaming-runtime workflow, exact backend commands, state contract, SIH
+> acceptance criteria, and the distinction between implemented behavior and
+> measurements still pending on target hardware.
+
 The system operates across four seamlessly synchronized layers:
 1. **Data Forge (`data_forge/`)**: An auditable, multi-terabyte data acquisition and synthesis pipeline adhering to ITU-R BS.1770-4 and 48 kHz fullband DSP standards. Enforces a **100% real-recordings-only policy** (zero synthetic data generation or artificial audio warping) and includes empirical gunfire audits ([gunfire_audit.py](file:///d:/Nisvana/data_forge/verifier/gunfire_audit.py)) with calibrated combat oversampling ($2.5\times$).
 2. **Training Engine (`training/`)**: A multi-model PyTorch framework co-designed from epoch 1 for edge inference. Features native NVIDIA Grace Blackwell GB10 bfloat16 AMP (CUDA 13), platform-adaptive Quantization-Aware Training (QAT), CleanUMamba spectrogram knowledge distillation, a 1-chunk lookahead output-delay buffer in Model 2, and SOTA speech-presence-gated SDR loss ($2.5\times$ boost in the 300–4000 Hz formant band with zero spectral leakage).
@@ -40,7 +46,7 @@ The system operates across four seamlessly synchronized layers:
 |  | TRAINING LAYER (training/)                                                                  |  |
 |  |  * Compute: Grace Blackwell GB10 Native bfloat16 AMP (CUDA 13, 128GB Unified Memory)        |  |
 |  |  * Co-Design: QAT from Epoch 1 (selective Conv/Linear observers; recurrent GRU unquantized)  |  |
-|  |  * Model 1: DeepFilterNet3 Base (Causal, strict 0ms algorithmic lookahead)                  |  |
+|  |  * Model 1: DeepFilterNet3 Base (Causal, zero extra lookahead)                               |  |
 |  |  * Model 2: DeepFilterNet3 Escalation (1-chunk lookahead, 10ms buffered output delay)        |  |
 |  |  * Model 3: CleanUMamba SSM (Teacher distillation target & GPU-export fallback)             |  |
 |  |  * Model 4: SNR / Harmonic Classifier Gate (Conformer/Conv1d 3-way gating signal)           |  |
@@ -212,10 +218,19 @@ python -m inference.scripts.export_onnx \
     --fp16
 
 # Live microphone enhancement with Hybrid Active Noise Cancellation
-python -m inference.scripts.live_mic_anc --engine onnx --provider cuda --anc-enable
+python -m inference.scripts.live_mic_anc \
+    --backend onnx \
+    --onnx-dir data/onnx_models \
+    --onnx-provider CUDAExecutionProvider \
+    --onnx-provider CPUExecutionProvider
 
 # Offline file enhancement with Escalation Router
-python -m inference.scripts.enhance_audio --input test_noisy.wav --output test_clean.wav --engine onnx --router
+python -m inference.scripts.enhance_audio \
+    --input test_noisy.wav \
+    --output test_clean.wav \
+    --model router \
+    --backend onnx \
+    --onnx-dir data/onnx_models
 ```
 
 ### Step 7: Multi-User Tactical Backend Execution

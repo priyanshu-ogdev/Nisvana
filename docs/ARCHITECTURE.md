@@ -92,7 +92,9 @@ To eliminate the inode bottleneck of millions of loose audio files while maintai
 ### 4.1 Heterogeneous Model Ensemble
 1. **Model 1 (`aegis-se-primary`) — DeepFilterNet3 Base**:
    - Causal 32-band ERB filterbank + Order-5 deep complex filtering.
-   - Strict 0ms algorithmic lookahead, $<10\text{ ms}$ processing time.
+   - Strictly causal with zero extra lookahead; actual total delay depends on
+     the backend (the fallback time-domain wrapper and vendored STFT runtime
+     have different algorithmic delays).
 2. **Model 2 (`aegis-se-escalation`) — DeepFilterNet3 Escalation**:
    - 1-chunk lookahead output-delay buffer (`_output_delay_buffer` introducing 10ms / 480-sample future context).
    - Absorbs severe acoustic transients and negative SNR conditions ($\text{SNR} < 0\text{ dB}$).
