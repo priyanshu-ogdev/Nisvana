@@ -368,6 +368,11 @@ class AcousticEscalationRouter:
 
         in_t = torch.from_numpy(audio_chunk).float().unsqueeze(0).to(self.device)
 
+        # A bypassed stream does not advance recurrent state. Reset the model
+        # before its first post-bypass chunk so stale pre-bypass context cannot
+        # influence that output.
+        self._reset_state_if_resuming_from_bypass(target_mode)
+
         with torch.no_grad():
             if target_mode == "bypass":
                 enhanced = audio_chunk.copy()
@@ -422,7 +427,6 @@ class AcousticEscalationRouter:
             )
 
         self._last_output_per_mode[target_mode] = enhanced.copy()
-        self._reset_state_if_resuming_from_bypass(target_mode)
         self.current_state = target_mode
         routing_info = {
             "mode": target_mode,
@@ -524,6 +528,9 @@ class AcousticEscalationRouter:
 
         in_t = torch.from_numpy(audio_chunk).float().unsqueeze(0).to(self.device)
 
+        # Keep the same stale-state protection as the synchronous route.
+        self._reset_state_if_resuming_from_bypass(target_mode)
+
         with torch.no_grad():
             if target_mode == "bypass":
                 enhanced = audio_chunk.copy()
@@ -556,7 +563,6 @@ class AcousticEscalationRouter:
             )
 
         self._last_output_per_mode[target_mode] = enhanced.copy()
-        self._reset_state_if_resuming_from_bypass(target_mode)
         self.current_state = target_mode
 
         # NOW classify this chunk -- off the critical path that already
