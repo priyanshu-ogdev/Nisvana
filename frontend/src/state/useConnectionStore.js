@@ -36,6 +36,13 @@ export const useConnectionStore = create((set, get) => ({
     pi_cpu_temp: null,
     cpu_pct: null,
     ram_pct: null,
+    backend: null,
+    provider: null,
+    algorithmic_delay_ms: null,
+    real_time_factor: null,
+    thermal_tier: null,
+    degradation_reason: null,
+    aec_mode: null,
   },
   
   // Clients are now dynamically populated from node_online events
@@ -44,6 +51,12 @@ export const useConnectionStore = create((set, get) => ({
   initConnection: () => {
     const { ws, _startSimulation } = get();
     if (ws) ws.close();
+
+    // Demo mode is explicit so an unavailable model/backend never looks live.
+    if (import.meta.env.VITE_DEMO_MODE === '1') {
+      _startSimulation();
+      return;
+    }
 
     const wsUrl = import.meta.env.VITE_BACKEND_WS_URL || import.meta.env.VITE_HUB_WS_URL || 'ws://127.0.0.1:8001/dashboard';
     
@@ -244,7 +257,7 @@ export const useConnectionStore = create((set, get) => ({
        const netMs = (typeof msg.network_ms === 'number')
           ? msg.network_ms
           : (currentRtt != null ? currentRtt / 2 : null);
-       set({ telemetry: {
+       const nextTelemetry = {
           latency_ms: msg.latency_ms,
           inference_ms: msg.inference_ms ?? null,
           network_ms: netMs,
@@ -257,7 +270,27 @@ export const useConnectionStore = create((set, get) => ({
           pi_cpu_temp: msg.pi_cpu_temp ?? null,
           cpu_pct: msg.cpu_pct ?? null,
           ram_pct: msg.ram_pct ?? null,
-       }});
+          backend: msg.backend ?? null,
+          provider: msg.provider ?? null,
+          algorithmic_delay_ms: msg.algorithmic_delay_ms ?? null,
+          real_time_factor: msg.real_time_factor ?? null,
+          thermal_tier: msg.thermal_tier ?? null,
+          degradation_reason: msg.degradation_reason ?? null,
+          aec_mode: msg.aec_mode ?? null,
+       };
+       set({ telemetry: nextTelemetry });
+       const clientId = msg.clientId || msg.node_id;
+       if (clientId && get().clients[clientId]) {
+          set(state => ({
+             clients: {
+                ...state.clients,
+                [clientId]: {
+                   ...state.clients[clientId],
+                   telemetry: nextTelemetry,
+                },
+             },
+          }));
+       }
     }
     else if (msg.type === 'link_status') {
        if (msg.state === 'streaming') {
@@ -393,11 +426,18 @@ export const useConnectionStore = create((set, get) => ({
          dropped_frames: 0,
          queue_depth: 0,
          link_quality: 'healthy',
-         snr_improvement_db: 14.8,
+         snr_improvement_db: null,
          model: 'DeepFilterNet3',
-         pi_cpu_temp: 48.2,
-         cpu_pct: 32,
-         ram_pct: 28,
+         pi_cpu_temp: null,
+         cpu_pct: null,
+         ram_pct: null,
+         backend: 'simulation',
+         provider: 'simulation',
+         algorithmic_delay_ms: null,
+         real_time_factor: null,
+         thermal_tier: null,
+         degradation_reason: 'no_live_backend',
+         aec_mode: null,
       },
       clients: {
         'person-1': { 
@@ -416,4 +456,3 @@ export const useConnectionStore = create((set, get) => ({
     });
   }
 }));
-

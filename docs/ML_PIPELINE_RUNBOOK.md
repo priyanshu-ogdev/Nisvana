@@ -261,3 +261,35 @@ Still open by design are empirical questions: final quality after full
 training, target-device RTF, and the quality/latency trade-off of INT8 versus
 FP16. Those are deployment measurements, not values that should be invented
 in documentation.
+
+## 7. Frontend/backend synchronization
+
+The dashboard is an observer and control surface, not a source of simulated
+health claims. The backend protocol remains authoritative and its Pydantic
+schemas are exported into `frontend/src/ws/schemas/`. The frontend must be
+able to show, per node:
+
+- the active model, inference backend, and execution provider;
+- measured inference latency, algorithmic delay, and real-time factor;
+- thermal tier and any explicit degradation reason;
+- AEC mode (`disabled`, `placeholder`, or `deepvqe`);
+- link state, queue depth, dropped frames, and measured RTT.
+
+When no live node is connected, simulation values are labeled as simulation
+and SIH metrics are left unavailable. The UI must never convert a missing
+measurement into a passing score or display a placeholder AEC/model as
+production-active.
+
+The synchronization path is:
+
+```text
+aegis-backend/src/ws/protocol.py
+    -> python -m src.ws.protocol --export-schemas
+    -> frontend/src/ws/schemas/
+    -> useConnectionStore.js
+    -> per-node PersonCard + global telemetry bar
+```
+
+Future runtime work should preserve this ownership boundary: inference
+measures model/backend state, the node publishes it, and the frontend renders
+it without recomputing or estimating SIH compliance.

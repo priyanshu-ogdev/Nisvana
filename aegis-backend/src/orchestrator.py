@@ -215,7 +215,17 @@ class Orchestrator:
             # 10. Telemetry (P2: Split latency)
             if now - last_telemetry_emit >= 1.0 / TELEMETRY_RATE:
                 last_telemetry_emit = now
-                tel = self._telemetry.collect(self._model_name)
+                tel = self._telemetry.collect(
+                    self._model_name,
+                    backend=self._model_loader.backend,
+                    provider=self._model_loader.provider,
+                    inference_ms=self._last_infer_ms,
+                    thermal_tier=self._thermal.current_tier,
+                    degradation_reason=self._model_loader.degradation_reason,
+                    aec_mode="deepvqe" if self._aec.is_active and self._aec.has_model else (
+                        "placeholder" if self._aec.is_active else "disabled"
+                    ),
+                )
                 tel["aec_active"] = self._aec.is_active
                 
                 # Split latency: report measured inference time and network/buffering time

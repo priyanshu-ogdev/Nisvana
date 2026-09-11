@@ -118,6 +118,10 @@ export function Overlay() {
              <TelemetryCell label="RAM" value={telemetry.ram_pct != null ? `${telemetry.ram_pct.toFixed(0)} %` : '—'} />
              <div className="w-px h-8 bg-white/10" />
              <TelemetryCell label="MODEL" value={telemetry.model || '—'} color="text-[var(--cyan)]" />
+             <div className="w-px h-8 bg-white/10" />
+             <TelemetryCell label="BACKEND" value={telemetry.backend || '—'} color="text-[var(--cyan)]" />
+             <div className="w-px h-8 bg-white/10" />
+             <TelemetryCell label="RTF" value={telemetry.real_time_factor != null ? `${telemetry.real_time_factor.toFixed(2)}x` : '—'} color={telemetry.real_time_factor != null && telemetry.real_time_factor < 1 ? "text-[var(--mint)]" : "text-[var(--amber)]"} />
          </div>
       </div>
     </div>

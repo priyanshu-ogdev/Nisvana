@@ -25,7 +25,18 @@ class TelemetryCollector:
         self._raw_rms_acc += float(np.sqrt(np.mean(raw.astype(np.float64) ** 2)) + 1e-10)
         self._enhanced_rms_acc += float(np.sqrt(np.mean(enhanced.astype(np.float64) ** 2)) + 1e-10)
 
-    def collect(self, model_name: str) -> dict:
+    def collect(
+        self,
+        model_name: str,
+        *,
+        backend: str = "unknown",
+        provider: str = "unknown",
+        inference_ms: float | None = None,
+        algorithmic_delay_ms: float | None = None,
+        thermal_tier: str | None = None,
+        degradation_reason: str | None = None,
+        aec_mode: str | None = None,
+    ) -> dict:
         """Return telemetry payload dict. Resets accumulators."""
         now = time.monotonic()
         elapsed = now - self._window_start
@@ -51,6 +62,16 @@ class TelemetryCollector:
             "cpu_pct": round(cpu_pct, 1),
             "ram_pct": round(ram_pct, 1),
             "pi_cpu_temp": round(temp, 1),
+            "backend": backend,
+            "provider": provider,
+            "algorithmic_delay_ms": algorithmic_delay_ms,
+            "real_time_factor": (
+                round(float(inference_ms) / 10.0, 3)
+                if inference_ms is not None else None
+            ),
+            "thermal_tier": thermal_tier,
+            "degradation_reason": degradation_reason,
+            "aec_mode": aec_mode,
         }
 
         # Reset

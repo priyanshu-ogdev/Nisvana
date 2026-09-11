@@ -102,3 +102,8 @@ class GatedAEC:
     @property
     def is_active(self) -> bool:
         return self._aec_active
+
+    @property
+    def has_model(self) -> bool:
+        """True only when a real AEC model is loaded, not the placeholder path."""
+        return self._model is not None

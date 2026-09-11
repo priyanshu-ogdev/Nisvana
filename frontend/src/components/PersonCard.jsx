@@ -22,6 +22,7 @@ export function PersonCard({ clientId, index = 0, totalCount = 1, side }) {
   const [alsaTooltipVisible, setAlsaTooltipVisible] = useState(false);
   
   if (!client) return null;
+  const nodeTelemetry = client.telemetry || {};
 
   const isSecure = client.state === CONNECTION_STATES.SECURE;
   const isDormant = client.state === CONNECTION_STATES.DORMANT;
@@ -170,6 +171,24 @@ export function PersonCard({ clientId, index = 0, totalCount = 1, side }) {
                 </button>
              </div>
           </div>
+
+          {isSecure && (nodeTelemetry.degradation_reason || nodeTelemetry.thermal_tier || nodeTelemetry.aec_mode) && (
+            <div className="mb-3 rounded border border-[var(--amber)]/20 bg-[var(--amber)]/5 px-2 py-1.5 text-[8px] font-mono text-[var(--amber)]">
+              <div className="flex justify-between">
+                <span>RUNTIME</span>
+                <span>{nodeTelemetry.backend || '—'} / {nodeTelemetry.provider || '—'}</span>
+              </div>
+              <div className="mt-1 flex justify-between">
+                <span>{nodeTelemetry.thermal_tier ? `THERMAL ${nodeTelemetry.thermal_tier}` : 'THERMAL —'}</span>
+                <span>{nodeTelemetry.aec_mode ? `AEC ${nodeTelemetry.aec_mode}` : 'AEC —'}</span>
+              </div>
+              {nodeTelemetry.degradation_reason && (
+                <div className="mt-1 truncate" title={nodeTelemetry.degradation_reason}>
+                  DEGRADED: {nodeTelemetry.degradation_reason}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Status Line */}
           <div className={`flex items-center space-x-2 text-[10px] font-bold tracking-widest mb-3 ${statusColor}`}>

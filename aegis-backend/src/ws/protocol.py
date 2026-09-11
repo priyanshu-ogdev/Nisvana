@@ -137,6 +137,13 @@ class Telemetry(BaseModel):
     aec_active: Optional[bool] = None
     snr_state: Optional[str] = None
     blend_weight: Optional[float] = None
+    backend: Optional[str] = Field(None, description="Inference backend: onnxruntime | pytorch | heuristic")
+    provider: Optional[str] = Field(None, description="Actual execution provider")
+    algorithmic_delay_ms: Optional[float] = None
+    real_time_factor: Optional[float] = None
+    thermal_tier: Optional[str] = None
+    degradation_reason: Optional[str] = None
+    aec_mode: Optional[str] = Field(None, description="disabled | placeholder | deepvqe")
 
 
 class LinkStatus(BaseModel):

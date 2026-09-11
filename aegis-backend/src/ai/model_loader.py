@@ -20,6 +20,9 @@ class ModelLoader:
         self._current_model = None
         self._current_name = "none"
         self._session = None
+        self._backend = "unknown"
+        self._provider = "unknown"
+        self._degradation_reason = None
 
     def load(self) -> str:
         """
@@ -37,6 +40,9 @@ class ModelLoader:
                 logger.info(f"Using noisereduce passthrough (no ONNX needed)")
                 self._current_name = name
                 self._current_model = "noisereduce"
+                self._backend = "heuristic"
+                self._provider = "cpu"
+                self._degradation_reason = "onnx_artifact_unavailable"
                 return name
 
             if not Path(path).exists():
@@ -55,6 +61,9 @@ class ModelLoader:
                 self._session = sess
                 self._current_name = name
                 self._current_model = "onnx"
+                self._backend = "onnxruntime"
+                self._provider = "CPUExecutionProvider"
+                self._degradation_reason = None
                 logger.info(f"Loaded ONNX model: {name} from {path}")
                 return name
             except Exception as e:
@@ -66,6 +75,18 @@ class ModelLoader:
 
     def get_session(self):
         return self._session
+
+    @property
+    def backend(self) -> str:
+        return self._backend
+
+    @property
+    def provider(self) -> str:
+        return self._provider
+
+    @property
+    def degradation_reason(self) -> Optional[str]:
+        return self._degradation_reason
 
     @property
     def model_name(self) -> str:
@@ -83,6 +104,9 @@ class ModelLoader:
                 self._session = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
                 self._current_name = name
                 self._current_model = "onnx"
+                self._backend = "onnxruntime"
+                self._provider = "CPUExecutionProvider"
+                self._degradation_reason = None
                 logger.info(f"Swapped to model: {name}")
                 return name
             except Exception as e:
@@ -92,4 +116,7 @@ class ModelLoader:
         self._session = None
         self._current_name = "noisereduce-cpu"
         self._current_model = "noisereduce"
+        self._backend = "heuristic"
+        self._provider = "cpu"
+        self._degradation_reason = f"model_swap_unavailable:{model_key}"
         return "noisereduce-cpu"
