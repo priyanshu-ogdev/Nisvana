@@ -40,6 +40,15 @@ project's actual failure mode. Both `pesq_<class>` and `snr_<class>` are
 now watched per class, each with their own independently configurable
 tolerance -- SNR's tolerance is expressed in dB, not the PESQ MOS-like
 scale, so they are deliberately separate fields, not one shared number.
+
+REVIEW-PASS FIX #3 (a coverage gap in the opposite direction): everything
+above protects against trading away performance on scarce NOISE classes.
+Nothing previously protected against the opposite failure -- an
+enhancement model over-suppressing or distorting content that was never
+noise in the first place (clean speech, and by extension anything else
+that shouldn't be aggressively gained-down). PASSTHROUGH_PROTECTED_CLASSES
+and a new si_snr watched-metric close that gap using the same generic
+mechanism, not a parallel one.
 """
 
 from dataclasses import dataclass, field
@@ -81,21 +90,56 @@ DISCLOSED_WEAK_CLASSES: List[str] = [
                             # `python -m data_forge.verifier.gunfire_audit` for actual count.
 ]
 
+# ADDITION (this pass): a second, conceptually distinct watch-list, added
+# for the same reason DISCLOSED_WEAK_CLASSES exists -- an aggregate metric
+# can silently absorb a regression on a small slice of validation data.
+# DISCLOSED_WEAK_CLASSES protects against trading away performance on
+# scarce NOISE classes; this protects against the opposite failure mode --
+# trading away fidelity on the one class in the whole taxonomy that is
+# NOT noise at all. "clean_speech" is the real UnifiedClass value for
+# pass-through content (confirmed against base_config.UNIFIED_CLASSES /
+# TAXONOMY_MAP, the same grounding standard DISCLOSED_WEAK_CLASSES above
+# was corrected against -- not a guessed string).
+#
+# The risk this catches: an enhancement model trained purely to maximize
+# PESQ/STOI/SNR on NOISY inputs has no direct signal telling it not to
+# over-process input that was already clean -- gain-suppression that
+# looks harmless in aggregate can still audibly distort speech, footsteps,
+# or other real content the wearer needed to hear. Guarding
+# si_snr_clean_speech (input-vs-target fidelity on near-clean input,
+# already computed generically by build_eval_metrics_dict for whatever
+# classes are present in a batch -- no metrics.py change needed) makes
+# "don't degrade content that didn't need denoising" an enforced
+# checkpoint-selection criterion, not an incidental hope.
+PASSTHROUGH_PROTECTED_CLASSES: List[str] = [
+    "clean_speech",
+]
+
 # Which per-class metrics this selector guards, and the eval-dict key
 # prefix each one is read from (e.g. "pesq_wind", "snr_wind"). Extending
 # this list (rather than hard-coding "pesq_" as the only prefix, as the
-# pre-fix version did) is what makes adding SNR a one-line change instead
-# of a second parallel code path.
+# pre-fix version did) is what makes adding SNR -- and now SI-SNR, for
+# the passthrough-preservation guard -- a one-line change instead of a
+# second parallel code path.
 WATCHED_METRIC_PREFIXES: Dict[str, str] = {
     "pesq": "pesq_",
     "snr": "snr_",
+    "si_snr": "si_snr_",
 }
 
 
 @dataclass
 class WorstClassCheckpointConfig:
     enabled: bool = True
-    watched_classes: List[str] = field(default_factory=lambda: list(DISCLOSED_WEAK_CLASSES))
+    # Both watch-lists are unioned into one guard list deliberately --
+    # the enforcement mechanism (this class's key metric must not regress
+    # past tolerance, independent of the aggregate) is genuinely identical
+    # for both the scarce-noise-class risk and the non-noise-preservation
+    # risk. Forking a parallel selector for the second case would
+    # duplicate logic that's already generic over class + metric prefix.
+    watched_classes: List[str] = field(
+        default_factory=lambda: list(DISCLOSED_WEAK_CLASSES) + list(PASSTHROUGH_PROTECTED_CLASSES)
+    )
     # A watched class's PESQ may not drop more than this from its own
     # true best-so-far, even if the aggregate metric improves.
     max_allowed_regression_pesq: float = 0.05
@@ -107,6 +151,15 @@ class WorstClassCheckpointConfig:
     # literature-grounded constant (no equivalent published guidance for
     # this specific selector-tolerance question was found).
     max_allowed_regression_snr_db: float = 1.0
+    # SI-SNR regression tolerance for PASSTHROUGH_PROTECTED_CLASSES, in dB.
+    # Tighter than max_allowed_regression_snr_db (1.0dB) deliberately: a
+    # 1dB SI-SDR drop on near-clean input is a much larger relative
+    # distortion than the same drop on a genuinely noisy signal, since
+    # there's far less room between "already close to the target" and
+    # "audibly altered." 0.5dB is a starting point to validate against
+    # AEGIS's own eval curve, same as the other tolerances here -- not a
+    # literature-grounded constant.
+    max_allowed_regression_si_snr_db: float = 0.5
     aggregate_metric_name: str = "pesq_aggregate"
 
 
@@ -114,17 +167,21 @@ class WorstClassCheckpointSelector:
     def __init__(self, config: WorstClassCheckpointConfig):
         self.config = config
         self.best_aggregate: Optional[float] = None
-        # Separate high-water-mark dicts per watched metric (pesq/snr),
-        # not one dict keyed by class alone -- the two metrics have
-        # independent tolerances and must not be conflated.
-        self.best_per_class: Dict[str, Dict[str, float]] = {"pesq": {}, "snr": {}}
+        # Separate high-water-mark dicts per watched metric (pesq/snr/
+        # si_snr), not one dict keyed by class alone -- each metric has
+        # its own independent tolerance and must not be conflated with
+        # the others. Built from WATCHED_METRIC_PREFIXES directly so
+        # adding a new watched metric (as si_snr was, this pass) doesn't
+        # also require remembering to update a second, separately
+        # hardcoded dict here.
+        self.best_per_class: Dict[str, Dict[str, float]] = {m: {} for m in WATCHED_METRIC_PREFIXES}
 
     def _tolerance_for(self, metric: str) -> float:
-        return (
-            self.config.max_allowed_regression_pesq
-            if metric == "pesq"
-            else self.config.max_allowed_regression_snr_db
-        )
+        return {
+            "pesq": self.config.max_allowed_regression_pesq,
+            "snr": self.config.max_allowed_regression_snr_db,
+            "si_snr": self.config.max_allowed_regression_si_snr_db,
+        }[metric]
 
     def should_accept_checkpoint(self, eval_metrics: Dict[str, float]) -> bool:
         """

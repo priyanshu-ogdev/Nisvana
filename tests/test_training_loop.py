@@ -761,4 +761,212 @@ class TestDataLoaderCollationAndIteration:
         # In training mode, pending_input is not used to buffer across batches
         assert model._pending_input is None
 
+    def test_worst_class_passthrough_guard_clean_speech_si_snr(self):
+        from training.callbacks.worst_class_checkpoint_selector import (
+            WorstClassCheckpointConfig,
+            WorstClassCheckpointSelector,
+        )
+
+        cfg = WorstClassCheckpointConfig(
+            watched_classes=["clean_speech", "wind_rotor_gap"],
+            max_allowed_regression_si_snr_db=0.5,
+        )
+        selector = WorstClassCheckpointSelector(cfg)
+
+        # Baseline evaluation
+        baseline = {
+            "pesq_aggregate": 2.8,
+            "pesq_clean_speech": 3.5,
+            "snr_clean_speech": 25.0,
+            "si_snr_clean_speech": 20.0,
+            "pesq_wind_rotor_gap": 2.2,
+            "snr_wind_rotor_gap": 8.0,
+            "si_snr_wind_rotor_gap": 7.0,
+        }
+        assert selector.should_accept_checkpoint(baseline) is True
+
+        # Checkpoint A: Higher aggregate PESQ, but over-suppresses clean speech (SI-SNR drops 1.0dB > 0.5dB tol)
+        regressed_clean = {
+            "pesq_aggregate": 3.0,  # Improved!
+            "pesq_clean_speech": 3.5,
+            "snr_clean_speech": 25.0,
+            "si_snr_clean_speech": 19.0,  # Regressed by 1.0 dB!
+            "pesq_wind_rotor_gap": 2.3,
+            "snr_wind_rotor_gap": 8.5,
+            "si_snr_wind_rotor_gap": 7.2,
+        }
+        assert selector.should_accept_checkpoint(regressed_clean) is False
+
+        # Checkpoint B: Higher aggregate PESQ and clean speech SI-SNR improves
+        improved_clean = {
+            "pesq_aggregate": 3.1,
+            "pesq_clean_speech": 3.6,
+            "snr_clean_speech": 25.5,
+            "si_snr_clean_speech": 21.0,
+            "pesq_wind_rotor_gap": 2.3,
+            "snr_wind_rotor_gap": 8.5,
+            "si_snr_wind_rotor_gap": 7.2,
+        }
+        assert selector.should_accept_checkpoint(improved_clean) is True
+
+    def test_confidence_gated_enhancer_behavior(self):
+        import torch
+        import torch.nn as nn
+        from training.models.gated_inference import (
+            ConfidenceGatedEnhancer,
+            GatedEnhancementConfig,
+        )
+        from training.models.model_loader import DeepFilterNet3Wrapper
+
+        class MockClassifier(nn.Module):
+            def __init__(self, mode="speech"):
+                super().__init__()
+                self.mode = mode
+
+            def forward(self, x):
+                # 3 classes: [harmonic, impulsive, speech_dominant]
+                if self.mode == "speech":
+                    return torch.tensor([[ -5.0, -5.0, 10.0 ]])  # 99.9% speech_dominant
+                else:
+                    return torch.tensor([[ 10.0, -5.0, -5.0 ]])  # 99.9% harmonic (noise)
+
+        se_model = DeepFilterNet3Wrapper(conv_lookahead=0)
+        clf_speech = MockClassifier(mode="speech")
+        cfg = GatedEnhancementConfig(
+            passthrough_confidence_threshold=0.6,
+            min_enhancement_strength=0.3,
+            gate_smoothing=0.0,  # No smoothing for instant step test
+        )
+        enhancer = ConfidenceGatedEnhancer(se_model, clf_speech, cfg)
+
+        x = torch.randn(1, 480)
+        out, diag = enhancer(x)
+        assert out.shape == x.shape
+        assert diag["speech_dominant_confidence"] > 0.95
+        # Confident speech relaxes enhancement toward min_enhancement_strength (0.3)
+        assert abs(diag["raw_gate"] - 0.3) < 0.05
+
+        # Test with noise-dominant classifier
+        clf_noise = MockClassifier(mode="noise")
+        enhancer_noise = ConfidenceGatedEnhancer(se_model, clf_noise, cfg)
+        out_n, diag_n = enhancer_noise(x)
+        assert diag_n["speech_dominant_confidence"] < 0.05
+        # Noise keeps full enhancement (gate = 1.0)
+        assert abs(diag_n["raw_gate"] - 1.0) < 0.01
+
+    def test_classifier_and_aec_lr_scheduling(self):
+        import torch
+        from training.trainers.classifier_trainer import ClassifierTrainer
+        from training.trainers.aec_trainer import AecGateTrainer
+        from training.configs.classifier_config import ClassifierConfig
+        from training.configs.aec_config import AecGateConfig
+
+        cfg_clf = ClassifierConfig()
+        cfg_clf.lr = 1e-3
+        cfg_clf.lr_warmup_steps = 100
+        cfg_clf.total_finetune_steps = 1000
+        t_clf = ClassifierTrainer(cfg_clf)
+
+        # At step 0, warmup lr is 0.0
+        batch_clf = {"wav": torch.randn(2, 9600), "label": torch.tensor([0, 1])}
+        res0 = t_clf.training_step(batch_clf)
+        assert res0["lr"] == 0.0
+
+        # At step 50, warmup lr is 5e-4
+        t_clf.step = 50
+        res50 = t_clf.training_step(batch_clf)
+        assert abs(res50["lr"] - 5e-4) < 1e-5
+
+        # AEC Trainer
+        cfg_aec = AecGateConfig()
+        cfg_aec.lr_placeholder = 2e-4
+        cfg_aec.lr_warmup_steps = 100
+        cfg_aec.total_finetune_steps = 1000
+        t_aec = AecGateTrainer(cfg_aec)
+
+        batch_aec = {
+            "mic.wav": torch.randn(2, 2048),
+            "farend.wav": torch.randn(2, 2048),
+            "nearend.wav": torch.randn(2, 2048),
+        }
+        res_aec0 = t_aec.training_step(batch_aec)
+        assert res_aec0["lr"] == 0.0
+
+        t_aec.step = 50
+        res_aec50 = t_aec.training_step(batch_aec)
+        assert abs(res_aec50["lr"] - 1e-4) < 1e-5
+
+    def test_gru_mamba_and_deepfilternet_contiguity_with_bfloat16_and_non_contiguous_inputs(self):
+        import torch
+        from training.models.model_loader import CleanUMambaWrapper, DeepFilterNet3Wrapper
+        from training.trainers.se_crosscheck_trainer import SeCrosscheckTrainer
+        from training.configs.se_crosscheck_config import SeCrosscheckConfig
+
+        # Test CleanUMambaWrapper
+        mamba = CleanUMambaWrapper(target_param_count="1M")
+        mamba.train()
+
+        # Intercept input to gru_mamba to verify it is strictly contiguous
+        contiguity_checked = {"called": 0}
+        orig_forward = mamba.gru_mamba.forward
+
+        def hooked_forward(input, hx=None):
+            assert input.is_contiguous(), "Input to gru_mamba MUST be contiguous to satisfy cuDNN requirements!"
+            contiguity_checked["called"] += 1
+            return orig_forward(input, hx)
+
+        mamba.gru_mamba.forward = hooked_forward
+
+        # Create deliberately non-contiguous input (e.g. via transpose/slicing)
+        non_contiguous_audio = torch.randn(2, 1, 8192)[:, :, ::2]
+        assert not non_contiguous_audio.is_contiguous()
+
+        # Full-clip batch training mode
+        out = mamba(non_contiguous_audio)
+        assert out.shape == non_contiguous_audio.shape
+        assert contiguity_checked["called"] > 0
+
+        # Streaming mode (eval)
+        mamba.eval()
+        mamba.reset_state()
+        chunk = torch.randn(2, 1, 480)[:, :, ::2]
+        out_chunk = mamba(chunk)
+        assert out_chunk.shape == chunk.shape
+
+        # Explicit mode
+        out_exp, h_new, ctx_new = mamba(chunk, hidden_state=torch.zeros(1, 2, 32), input_context=torch.zeros(2, 1, 63))
+        assert out_exp.shape == chunk.shape
+
+        # Test DeepFilterNet3Wrapper
+        df_model = DeepFilterNet3Wrapper(df_lookahead=2, conv_lookahead=2)
+        df_model.train()
+        df_contiguity_checked = {"called": 0}
+        orig_df_forward = df_model.gru.forward
+
+        def hooked_df_forward(input, hx=None):
+            assert input.is_contiguous(), "Input to DeepFilterNet3 gru MUST be contiguous to satisfy cuDNN requirements!"
+            df_contiguity_checked["called"] += 1
+            return orig_df_forward(input, hx)
+
+        df_model.gru.forward = hooked_df_forward
+
+        out_df = df_model(non_contiguous_audio)
+        assert out_df.shape == non_contiguous_audio.shape
+        assert df_contiguity_checked["called"] > 0
+
+        # Verify SeCrosscheckTrainer training_step works end-to-end with non-contiguous batch
+        cfg = SeCrosscheckConfig()
+        cfg.device = "cpu"
+        cfg.total_finetune_steps = 100
+        trainer = SeCrosscheckTrainer(config=cfg)
+
+        batch = {
+            "noisy.wav": torch.randn(2, 8192)[:, ::2],  # non-contiguous
+            "clean.wav": torch.randn(2, 8192)[:, ::2],  # non-contiguous
+        }
+        res = trainer.training_step(batch)
+        assert "loss" in res and res["loss"] >= 0.0
+
+
+
 

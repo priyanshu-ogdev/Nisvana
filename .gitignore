@@ -27,7 +27,15 @@ data/forge/*
 data/shards/*
 data/checkpoints/*
 training/checkpoints/*
+training/runs/*
+training/wandb/*
+wandb/*
+mlruns/*
 *.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
 data/eval_reports/*
 data/onnx_models/*
 data/manifests/fetch_manifest.json

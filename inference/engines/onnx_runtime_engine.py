@@ -130,34 +130,23 @@ class OnnxRuntimeSession:
         """Creates or refreshes IO binding buffers. Only called when shape
         changes (rare in real-time streaming where chunk size is fixed)."""
         self._io_binding = self.session.io_binding()
-        device = "cuda" if "CUDA" in self.active_provider else "cpu"
 
-        # Bind primary audio input
-        self._io_binding.bind_input(
-            name=self.input_name,
-            device_type=device,
-            device_id=0,
-            element_type=np.float32,
-            shape=tuple(input_audio.shape),
-            buffer_ptr=input_audio.ctypes.data,
-        )
+        # The audio callback owns a host NumPy buffer.  It must be bound as a
+        # CPU input; treating its pointer as CUDA memory is invalid and causes
+        # ORT to throw on every frame before falling back to session.run().
+        # ORT still schedules the graph on the selected execution provider.
+        self._io_binding.bind_cpu_input(self.input_name, input_audio)
 
-        # Bind primary audio output to device memory
-        self._io_binding.bind_output(self.output_name, device_type=device, device_id=0)
+        # Let ORT allocate the output on the active provider and copy it back
+        # once via copy_outputs_to_cpu().
+        self._io_binding.bind_output(self.output_name)
 
         # Bind state inputs/outputs for stateful models
         if self.is_stateful and self._current_state is not None:
             for name, state_arr in zip(self.state_input_names, self._current_state):
-                self._io_binding.bind_input(
-                    name=name,
-                    device_type=device,
-                    device_id=0,
-                    element_type=np.float32,
-                    shape=tuple(state_arr.shape),
-                    buffer_ptr=state_arr.ctypes.data,
-                )
+                self._io_binding.bind_cpu_input(name, state_arr)
             for name in self.state_output_names:
-                self._io_binding.bind_output(name, device_type=device, device_id=0)
+                self._io_binding.bind_output(name)
 
         self._io_bound_input_shape = tuple(input_audio.shape)
 
@@ -189,25 +178,11 @@ class OnnxRuntimeSession:
                 if self._io_bound_input_shape != tuple(input_audio.shape):
                     self._setup_io_binding(input_audio)
                 else:
-                    # Update input data pointer (shape unchanged, buffer reuse)
-                    self._io_binding.bind_input(
-                        name=self.input_name,
-                        device_type="cuda",
-                        device_id=0,
-                        element_type=np.float32,
-                        shape=tuple(input_audio.shape),
-                        buffer_ptr=input_audio.ctypes.data,
-                    )
+                    # Refresh the host input binding for this callback buffer.
+                    self._io_binding.bind_cpu_input(self.input_name, input_audio)
                     if self.is_stateful and self._current_state is not None:
                         for name, state_arr in zip(self.state_input_names, self._current_state):
-                            self._io_binding.bind_input(
-                                name=name,
-                                device_type="cuda",
-                                device_id=0,
-                                element_type=np.float32,
-                                shape=tuple(state_arr.shape),
-                                buffer_ptr=state_arr.ctypes.data,
-                            )
+                            self._io_binding.bind_cpu_input(name, state_arr)
 
                 self.session.run_with_iobinding(self._io_binding)
                 outputs = self._io_binding.copy_outputs_to_cpu()

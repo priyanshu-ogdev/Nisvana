@@ -15,7 +15,7 @@ def main():
 
     try:
         train_ds = AegisClassifierIterableDataset(config.data.classifier_shards, split="train")
-    except ImportError:
+    except (ImportError, FileNotFoundError):
         train_ds = None
     print(f"[{config.model_key}] gate_classes={GATE_CLASSES} arch={config.architecture} "
           f"lr={config.lr} class_loss_weights={config.class_loss_weights}")

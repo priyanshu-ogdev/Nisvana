@@ -77,23 +77,18 @@
       "description": "Current depth of outbound queue",
       "title": "Queue Depth"
     },
-    "link_quality": {
+    "link_state": {
       "anyOf": [
         {
-          "enum": [
-            "healthy",
-            "degraded",
-            "disconnected"
-          ],
           "type": "string"
         },
         {
           "type": "null"
         }
       ],
-      "default": "healthy",
-      "description": "Link quality state",
-      "title": "Link Quality"
+      "default": null,
+      "description": "Link health state: online | degraded | offline",
+      "title": "Link State"
     },
     "snr_improvement_db": {
       "description": "Estimated SNR delta dB",

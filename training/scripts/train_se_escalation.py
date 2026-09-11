@@ -17,7 +17,7 @@ def main():
         train_ds = build_weighted_se_dataset(
             config.data.speech_enhancement_shards, "train", config.class_oversample_factors
         )
-    except ImportError:
+    except (ImportError, FileNotFoundError):
         train_ds = None
     print(f"[{config.model_key}] lookahead=stock(2/2) lr={config.lr} "
           f"snr_weights={dict(zip(config.dataloader_snrs, config.dataloader_snr_weights))}")

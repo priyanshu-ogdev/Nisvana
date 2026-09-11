@@ -29,6 +29,7 @@ class SePrimaryTrainer(BaseTrainer):
         config: Optional[SePrimaryConfig] = None,
         train_dataset: Optional[Any] = None,
         val_dataset: Optional[Any] = None,
+        teacher_checkpoint: Optional[Any] = None,
     ):
         cfg = config or SePrimaryConfig()
         super().__init__(cfg)
@@ -70,10 +71,24 @@ class SePrimaryTrainer(BaseTrainer):
                 multires_spec_gamma=getattr(self.config.loss, "multires_spec_gamma", 0.3),
                 multires_fft_sizes=getattr(self.config.loss, "multires_fft_sizes", [256, 512, 1024, 2048]),
                 local_snr_factor=getattr(self.config.loss, "local_snr_factor", 1e-3),
+                sdr_factor=getattr(self.config.loss, "sdr_factor", 0.5),
+                impulse_weight_factor=getattr(self.config.loss, "impulse_weight_factor", 0.3),
+                impulse_onset_boost=getattr(self.config.loss, "impulse_onset_boost", 3.0),
+                perceptual_freq_factor=getattr(self.config.loss, "perceptual_freq_factor", 0.2),
+                speech_presence_sdr_boost=getattr(
+                    self.config.loss, "speech_presence_sdr_boost", 2.5
+                ),
+                speech_presence_rms_threshold=getattr(
+                    self.config.loss, "speech_presence_rms_threshold", 0.02
+                ),
+                speech_band_hz=getattr(self.config.loss, "speech_band_hz", (300, 4000)),
+                speech_presence_sample_rate=getattr(
+                    self.config.loss, "speech_presence_sample_rate", 48000
+                ),
             )
         else:
             loss_cfg = ResolvedLossConfig()
-        self.loss_fn = build_se_loss(loss_cfg)
+        self.loss_fn = build_se_loss(loss_cfg, prefer_vendored=True)
 
         # Initialise EMA shadow weights
         self.init_ema(self.model)
@@ -92,6 +107,16 @@ class SePrimaryTrainer(BaseTrainer):
                 self.teacher = build_model_for_key("aegis-se-crosscheck")
                 if hasattr(self, "device") and isinstance(self.device, torch.device):
                     self.teacher.to(self.device)
+                if teacher_checkpoint is not None:
+                    checkpoint = torch.load(
+                        teacher_checkpoint,
+                        map_location=self.device,
+                        weights_only=False,
+                    )
+                    teacher_state = checkpoint.get("model_state", checkpoint)
+                    if not isinstance(teacher_state, dict):
+                        raise ValueError("teacher checkpoint does not contain a model state dictionary")
+                    self.teacher.load_state_dict(teacher_state, strict=False)
                 self.teacher.eval()
                 for p in self.teacher.parameters():
                     p.requires_grad_(False)
@@ -164,6 +189,9 @@ class SePrimaryTrainer(BaseTrainer):
         if hasattr(self, "device") and isinstance(self.device, torch.device):
             noisy = noisy.to(self.device)
             clean = clean.to(self.device)
+
+        noisy = noisy.contiguous()
+        clean = clean.contiguous()
 
         amp_enabled = getattr(self, "use_amp", False) and getattr(self, "device", None) is not None and getattr(self.device, "type", "") == "cuda"
         amp_dtype = getattr(self, "amp_dtype", torch.bfloat16 if getattr(self, "scaler", None) is None else torch.float16)
@@ -276,4 +304,3 @@ class SePrimaryTrainer(BaseTrainer):
 
             from training.utils.metrics import build_eval_metrics_dict
             return build_eval_metrics_dict(enhanced, clean, classes)
-

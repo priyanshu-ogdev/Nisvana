@@ -1,6 +1,6 @@
 [Unit]
-Description=Project AEGIS Hub Server
-After=network.target
+Description=Project AEGIS Unified Hub Server (Dynamic Node Registry & Relay)
+After=network.target network-online.target
 Wants=network-online.target
 
 [Service]
@@ -8,14 +8,17 @@ Type=simple
 User=pi
 Group=pi
 WorkingDirectory=/home/pi/aegis-hub
+EnvironmentFile=-/etc/aegis/hub.env
 ExecStart=/home/pi/aegis-hub/venv/bin/python -m src.main
 Restart=always
 RestartSec=2
-EnvironmentFile=-/etc/aegis/hub.env
-Nice=-5
 LimitNOFILE=65536
-KillMode=mixed
-TimeoutStopSec=5
+Nice=-5
+
+# Standard environment guards
+Environment=PYTHONUNBUFFERED=1
+Environment=AEGIS_HUB_PORT=8001
+Environment=AEGIS_HUB_HOST=0.0.0.0
 
 [Install]
 WantedBy=multi-user.target

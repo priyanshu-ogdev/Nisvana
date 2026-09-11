@@ -27,10 +27,12 @@ from inference.runtime.hybrid_anc import HybridAncPipeline
 from inference.runtime.escalation_router import AcousticEscalationRouter
 from inference.runtime.audio_stream import StatefulHopProcessor
 from inference.runtime.multichannel_frontend import MultichannelHardwareFrontend, HardwareFrontendConfig
+from inference.engines.onnx_model_adapter import OnnxModelAdapter
 
 
 def run_live_simulation(duration_seconds: float = 5.0, chunk_ms: float = 10.0, num_air_mics: int = 4,
-                         save_output_path: Optional[str] = None):
+                         save_output_path: Optional[str] = None, backend: str = "pytorch",
+                         onnx_dir: Optional[str] = None, onnx_providers: Optional[list] = None):
     """Simulates real-time tactical headset streaming with dynamic acoustic conditions.
 
     FIX (multichannel hardware, carried from an earlier pass): previously
@@ -66,9 +68,26 @@ def run_live_simulation(duration_seconds: float = 5.0, chunk_ms: float = 10.0, n
     print(f"Hardware input: {num_air_mics}-mic air array + throat-contact mic -> MultichannelHardwareFrontend")
     print("========================================================================")
 
-    model_primary = build_model_for_key("aegis-se-primary")
-    model_escalation = build_model_for_key("aegis-se-escalation")
-    classifier = build_model_for_key("aegis-clf-gate")
+    if backend == "onnx":
+        if onnx_dir is None:
+            raise ValueError("onnx_dir is required when backend='onnx'")
+        export_dir = Path(onnx_dir)
+
+        def exported(key: str) -> OnnxModelAdapter:
+            path = export_dir / f"{key}.onnx"
+            if not path.exists():
+                raise FileNotFoundError(f"Missing ONNX export: {path}")
+            return OnnxModelAdapter(path, providers=onnx_providers)
+
+        model_primary = exported("aegis-se-primary")
+        model_escalation = exported("aegis-se-escalation")
+        classifier = exported("aegis-clf-gate")
+    elif backend == "pytorch":
+        model_primary = build_model_for_key("aegis-se-primary")
+        model_escalation = build_model_for_key("aegis-se-escalation")
+        classifier = build_model_for_key("aegis-clf-gate")
+    else:
+        raise ValueError(f"Unsupported inference backend: {backend}")
 
     router = AcousticEscalationRouter(
         model_primary=model_primary,
@@ -210,10 +229,22 @@ def main():
     parser.add_argument("--save-output", type=str, default=None,
                         help="Path to save the enhanced audio as a WAV file after the run -- without this, "
                              "the demo only reports timing, with no way to actually verify enhancement quality.")
+    parser.add_argument("--backend", choices=["pytorch", "onnx"], default="pytorch")
+    parser.add_argument("--onnx-dir", type=str, default=None,
+                        help="Directory containing <model-key>.onnx exports.")
+    parser.add_argument("--onnx-provider", action="append", default=None,
+                        help="ONNX execution provider; repeat to set priority order.")
     args = parser.parse_args()
 
-    run_live_simulation(duration_seconds=args.duration, chunk_ms=args.chunk_ms,
-                         num_air_mics=args.num_air_mics, save_output_path=args.save_output)
+    run_live_simulation(
+        duration_seconds=args.duration,
+        chunk_ms=args.chunk_ms,
+        num_air_mics=args.num_air_mics,
+        save_output_path=args.save_output,
+        backend=args.backend,
+        onnx_dir=args.onnx_dir,
+        onnx_providers=args.onnx_provider,
+    )
 
 
 if __name__ == "__main__":

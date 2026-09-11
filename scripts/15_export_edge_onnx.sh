@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Project AEGIS — [15] ONNX Edge Model Exporter & Latency Profiler
-# Exports models to ONNX format with dynamic shapes for NVIDIA Jetson AGX Orin & DSPs.
+# Exports models using the canonical 48 kHz / 10 ms streaming contract.
 # ==============================================================================
 
 set -euo pipefail

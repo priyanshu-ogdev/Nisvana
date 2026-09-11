@@ -196,7 +196,10 @@ class ClassifierBranch:
 
             snr = rec.get("measured_snr_db", 0.0)
             noise_src_name = rec.get("noise_source", "")
-            unified_class = noise_class_map.get(noise_src_name, "general_noise")
+            unified_class = rec.get(
+                "unified_class",
+                noise_class_map.get(noise_src_name, "general_noise"),
+            )
             sp = rec.get("split", "train")
 
             n_windows = max(1, len(audio) // window_samples)

@@ -17,7 +17,7 @@ def main():
         train_ds = build_weighted_se_dataset(
             config.data.speech_enhancement_shards, "train", config.class_oversample_factors
         )
-    except ImportError:
+    except (ImportError, FileNotFoundError):
         train_ds = None
     print(f"[{config.model_key}] target_param_count={config.target_param_count} "
           f"total_finetune_steps={config.total_finetune_steps} batch_size={config.batch_size}")

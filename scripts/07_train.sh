@@ -15,7 +15,7 @@
 #   - SNR Curriculum scheduling (+15 dB down to -5 dB)
 #
 # Usage:
-#   ./scripts/train.sh [OPTIONS]
+#   ./scripts/07_train.sh [OPTIONS]
 #
 # Options:
 #   --model [all|se_primary|se_escalation|se_crosscheck|classifier|aec]
@@ -51,6 +51,37 @@ if declare -f detect_python > /dev/null; then
 else
     PY_BIN="$(command -v python3 || command -v python)"
 fi
+
+# Stage 7 consumes already-exported WebDataset shards. It must never invoke
+# data-forge or regenerate data on the training server.
+SHARDS_ROOT="${DATA_FORGE_DATA_DIR:-${ROOT_DIR}/data}/shards"
+if [ ! -d "${SHARDS_ROOT}" ]; then
+    echo "ERROR: expected existing data-forge shards at ${SHARDS_ROOT}" >&2
+    exit 1
+fi
+
+REQUESTED_DEVICE="cuda"
+previous_arg=""
+for arg in "$@"; do
+    if [ "${previous_arg}" = "--device" ]; then
+        REQUESTED_DEVICE="${arg}"
+    fi
+    previous_arg="${arg}"
+done
+if [ "${REQUESTED_DEVICE}" != "cpu" ] && ! "${PY_BIN}" -c "import torch; assert torch.cuda.is_available(), 'CUDA is unavailable'" 2>/dev/null; then
+    echo "ERROR: CUDA is unavailable in the selected Python environment." >&2
+    echo "Activate the DGX/GB10 environment containing CUDA-enabled PyTorch, then retry." >&2
+    exit 1
+fi
+
+echo "Existing shard inventory:"
+find "${SHARDS_ROOT}" -type f -name '*.tar' -printf '  %P\n' | sort | head -20
+SHARD_COUNT="$(find "${SHARDS_ROOT}" -type f -name '*.tar' | wc -l)"
+if [ "${SHARD_COUNT}" -eq 0 ]; then
+    echo "ERROR: no WebDataset .tar shards found under ${SHARDS_ROOT}" >&2
+    exit 1
+fi
+echo "  Total .tar shards: ${SHARD_COUNT}"
 
 # Detect compute device and hardware
 GPU_INFO="CPU"

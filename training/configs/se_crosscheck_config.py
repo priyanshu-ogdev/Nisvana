@@ -62,8 +62,10 @@ class SeCrosscheckConfig(BaseModelConfig):
     # this model is meant to cross-check) -- NOT Model 2's low-SNR skew,
     # since the cross-check's job is validating Model 1's numbers on
     # matched data, not exploring a different training distribution.
-    dataloader_snrs: List[int] = field(default_factory=lambda: [-100, -5, 0, 5, 10, 20, 40])
-    dataloader_snr_weights: List[float] = field(default_factory=lambda: [0.10, 0.20, 0.20, 0.20, 0.15, 0.10, 0.05])
+    dataloader_snrs: List[int] = field(default_factory=lambda: [-15, -10, -5, 0, 5, 10, 15, 20])
+    dataloader_snr_weights: List[float] = field(
+        default_factory=lambda: [0.08, 0.08, 0.14, 0.16, 0.16, 0.14, 0.12, 0.12]
+    )
     class_oversample_factors: Dict[str, float] = field(default_factory=lambda: dict(CLASS_OVERSAMPLE_FACTORS))
 
     eval_reference_target_snr_db: float = 15.0
